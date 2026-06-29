@@ -5,6 +5,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from routers import router as main_router
+from routers.auth import router as auth_router
+from routers.sources import router as sources_router
+from routers.events import router as events_router
+from routers.jobs import router as jobs_router
+from routers.profile import router as profile_router
 from database import init_db
 
 
@@ -29,3 +34,8 @@ app.add_middleware(
 )
 
 app.include_router(main_router)
+app.include_router(auth_router)
+app.include_router(sources_router)
+app.include_router(events_router)
+app.include_router(jobs_router)
+app.include_router(profile_router)
