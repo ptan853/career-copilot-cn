@@ -1,9 +1,10 @@
+import AuthGate from '@/components/auth/auth-gate'
 import type { Metadata } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
   title: 'Career Copilot CN',
-  description: '国内版 AI 求职 Copilot',
+  description: 'Evidence-first job application OS',
 }
 
 export default function RootLayout({
@@ -13,8 +14,8 @@ export default function RootLayout({
 }) {
   return (
     <html lang="zh-CN">
-      <body className="min-h-screen bg-[#F5F7FA] text-[#1A1A2E]">
-        {children}
+      <body className="min-h-screen bg-app-bg text-app-ink" suppressHydrationWarning>
+        <AuthGate>{children}</AuthGate>
       </body>
     </html>
   )

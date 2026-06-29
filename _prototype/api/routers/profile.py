@@ -6,6 +6,7 @@ from typing import Optional
 
 from database import get_session
 from models import Profile
+from auth_deps import get_current_user_id
 
 router = APIRouter(prefix="/api/profile", tags=["profile"])
 
@@ -22,10 +23,14 @@ class UpdateProfileBody(BaseModel):
 
 
 @router.get("")
-def get_profile(session: Session = Depends(get_session)):
+def get_profile(
+    user_id: str = Depends(get_current_user_id),
+    session: Session = Depends(get_session),
+):
     """获取 Profile"""
-    # TODO: 根据 user_id 获取
-    profile = session.exec(select(Profile).limit(1)).first()
+    profile = session.exec(
+        select(Profile).where(Profile.user_id == user_id)
+    ).first()
     if not profile:
         return {"profile": None}
     return {
@@ -41,9 +46,15 @@ def get_profile(session: Session = Depends(get_session)):
 
 
 @router.patch("")
-def update_profile(body: UpdateProfileBody, session: Session = Depends(get_session)):
+def update_profile(
+    body: UpdateProfileBody,
+    user_id: str = Depends(get_current_user_id),
+    session: Session = Depends(get_session),
+):
     """更新 Profile"""
-    profile = session.exec(select(Profile).limit(1)).first()
+    profile = session.exec(
+        select(Profile).where(Profile.user_id == user_id)
+    ).first()
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found")
 

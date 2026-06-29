@@ -1,460 +1,464 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
-import { type EventData } from '@/components/review-card'
-import EventEditModal from '@/components/event-edit-modal'
-import { EVENT_TYPE_COLORS } from '@/lib/event-constants'
-import { getEvents, updateEvent, confirmEvent, archiveEvent, uploadSource, ingestMultiSource, getJob, getProfile } from '@/lib/api-client'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import {
+  getEvents, createEvent, updateEvent, confirmEvent, archiveEvent,
+  getSources, createSource, uploadSource as uploadSourceFile,
+  getReadiness,
+} from '@/lib/api-client'
 
-const ADDABLE_SECTIONS = [
-  { type: 'work' as const, label: '工作经历', icon: '💼' },
-  { type: 'education' as const, label: '教育经历', icon: '🎓' },
-  { type: 'project' as const, label: '项目经历', icon: '🚀' },
-  { type: 'custom' as const, label: '自定义', icon: '✨' },
-]
+// ─── Constants ────────────────────────────────────────────────
 
-export default function ProfilePage() {
-  const [events, setEvents] = useState<EventData[]>([])
-  const [profile, setProfile] = useState<any>(null)
+const EVENT_TYPE_CONFIG: Record<string, { label: string; bar: string; bg: string }> = {
+  work:          { label: '工作', bar: '#24243f', bg: '#f4c4ca' },
+  internship:    { label: '实习', bar: '#8e74ff', bg: '#ddd5ff' },
+  project:       { label: '项目', bar: '#34a47f', bg: '#c5efdf' },
+  education:     { label: '教育', bar: '#4a7dff', bg: '#dbe7ff' },
+  certification: { label: '证书', bar: '#34a47f', bg: '#dff8f1' },
+  award:         { label: '获奖', bar: '#c78733', bg: '#f8d7aa' },
+  publication:   { label: '发表', bar: '#d95f67', bg: '#ffe3e6' },
+  patent:        { label: '专利', bar: '#d95f67', bg: '#ffe3e6' },
+  course:        { label: '课程', bar: '#4a7dff', bg: '#dbe7ff' },
+  competition:   { label: '竞赛', bar: '#c78733', bg: '#f8d7aa' },
+  open_source:   { label: '开源', bar: '#8e74ff', bg: '#ddd5ff' },
+  startup:       { label: '创业', bar: '#d95f67', bg: '#ffe3e6' },
+  volunteer:     { label: '志愿', bar: '#34a47f', bg: '#c5efdf' },
+  language:      { label: '语言', bar: '#4a7dff', bg: '#dbe7ff' },
+  custom:        { label: '其他', bar: '#6d7382', bg: '#f4f1ec' },
+}
+
+const STATUS_CONFIG: Record<string, { label: string; cls: string }> = {
+  draft:        { label: '待审核', cls: 'badge-amber' },
+  needs_review: { label: '需修改', cls: 'badge-red' },
+  confirmed:    { label: '已确认', cls: 'badge-green' },
+  archived:     { label: '已归档', cls: 'badge-gray' },
+}
+
+const EVENT_ORDER = ['work', 'internship', 'project', 'education', 'certification', 'award', 'publication', 'patent', 'course', 'competition', 'open_source', 'startup', 'volunteer', 'language', 'custom']
+
+const EVENT_TYPE_OPTIONS = EVENT_ORDER.map((key) => ({
+  key,
+  label: EVENT_TYPE_CONFIG[key]?.label || key,
+}))
+
+const EMPTY_EVENT_FORM = {
+  event_type: 'work',
+  title: '',
+  role: '',
+  organization: '',
+  location: '',
+  time_start: '',
+  time_end: '',
+  description: '',
+  tags_text: '',
+}
+
+// ─── Component ────────────────────────────────────────────────
+
+export default function VaultPage() {
+  const [events, setEvents] = useState<any[]>([])
+  const [sources, setSources] = useState<any[]>([])
+  const [readiness, setReadiness] = useState<any>(null)
   const [loading, setLoading] = useState(true)
+  const [activeTab, setActiveTab] = useState<'events' | 'sources'>('events')
   const [uploading, setUploading] = useState(false)
-  const [uploadStage, setUploadStage] = useState<string | null>(null)
-  const [editingEvent, setEditingEvent] = useState<EventData | null>(null)
-  const [modalOpen, setModalOpen] = useState(false)
-  const [addingType, setAddingType] = useState<string | null>(null)
+  const [savingEvent, setSavingEvent] = useState(false)
+  const [showCreate, setShowCreate] = useState(false)
   const [ingestText, setIngestText] = useState('')
   const [ingestUrls, setIngestUrls] = useState('')
-  const [showIngestPanel, setShowIngestPanel] = useState(false)
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
-
-  const showToast = (msg: string, type: 'success' | 'error' = 'success') => {
-    setToast({ message: msg, type })
-    setTimeout(() => setToast(null), 3000)
-  }
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editForm, setEditForm] = useState<Record<string, any>>({})
+  const [createForm, setCreateForm] = useState<Record<string, any>>(EMPTY_EVENT_FORM)
+  const fileRef = useRef<HTMLInputElement>(null)
 
   const loadData = useCallback(async () => {
     setLoading(true)
     try {
-      const [evts, prof] = await Promise.all([
-        getEvents().catch(() => []),
-        getProfile().catch(() => ({ profile: null })),
+      const [srcs, evts, rd] = await Promise.all([
+        getSources().catch(() => ({ data: [] })),
+        getEvents().catch(() => ({ data: [] })),
+        getReadiness().catch(() => ({ data: null })),
       ])
-      setEvents(evts || [])
-      setProfile(prof?.profile || null)
-    } catch {
-      setEvents([])
-    } finally {
-      setLoading(false)
-    }
+      setSources((srcs as any).data || [])
+      setEvents((evts as any).data || [])
+      setReadiness((rd as any).data)
+    } catch {} finally { setLoading(false) }
   }, [])
 
   useEffect(() => { loadData() }, [loadData])
 
-  const pollJob = async (jobId: string) => {
-    for (let i = 0; i < 30; i++) {
-      await new Promise(r => setTimeout(r, 2000))
-      try {
-        const job = await getJob(jobId)
-        if (job.status === 'completed') {
-          showToast(`解析完成，新增 ${job.result?.event_count || 0} 条事件`)
-          loadData()
-          setUploading(false)
-          setUploadStage(null)
-          return
-        }
-        if (job.status === 'failed') {
-          showToast(job.error || '解析失败', 'error')
-          setUploading(false)
-          setUploadStage(null)
-          return
-        }
-        if (i === 2) setUploadStage('AI 正在分析...')
-        else if (i > 10) setUploadStage('仍在处理中...')
-      } catch {}
-    }
-    showToast('解析超时', 'error')
-    setUploading(false)
-    setUploadStage(null)
-  }
-
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
+  // ── Upload ──────────────────────────────────────────────────
+  const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]; if (!f) return
     setUploading(true)
-    setUploadStage('上传中...')
-    try {
-      const { job_id } = await uploadSource(file)
-      pollJob(job_id)
-    } catch (err: any) {
-      showToast(err.message || '上传失败', 'error')
-      setUploading(false)
-      setUploadStage(null)
-    }
+    try { await uploadSourceFile(f); loadData() } catch (e) {}
+    finally { setUploading(false) }
   }
 
-  const handleIngestSubmit = async () => {
-    const text = ingestText.trim()
-    const urls = ingestUrls
-      .split('\n')
-      .map(s => s.trim())
-      .filter(s => s.startsWith('http'))
-    if (!text && urls.length === 0) {
-      showToast('请输入文字或粘贴链接', 'error')
-      return
-    }
+  const handleIngest = async () => {
+    const t = ingestText.trim()
+    const urls = ingestUrls.split('\n').map(s => s.trim()).filter(s => s.startsWith('http'))
+    if (!t && !urls.length) return
     setUploading(true)
-    setUploadStage('AI 正在分析...')
     try {
-      const { job_id } = await ingestMultiSource({ text, urls })
-      setShowIngestPanel(false)
-      setIngestText('')
-      setIngestUrls('')
-      pollJob(job_id)
-    } catch (err: any) {
-      showToast(err.message || '提交失败', 'error')
-      setUploading(false)
-      setUploadStage(null)
+      await createSource({ text: t, urls })
+      setIngestText(''); setIngestUrls('')
+      loadData()
+    } catch {} finally { setUploading(false) }
+  }
+
+  // ── Edit inline ─────────────────────────────────────────────
+  const startEdit = (event: any) => {
+    setEditingId(event.id)
+    setEditForm({
+      title: event.title || '',
+      role: event.role || '',
+      organization: event.organization || '',
+      description: event.description || '',
+      time_start: event.time_start || '',
+      time_end: event.time_end || '',
+      location: event.location || '',
+      tags_text: (event.tags || []).join('，'),
+    })
+  }
+
+  const saveEdit = async () => {
+    if (!editingId) return
+    try {
+      await updateEvent(editingId, {
+        ...editForm,
+        tags: splitTags(editForm.tags_text),
+      })
+      setEditingId(null)
+      loadData()
+    } catch {}
+  }
+
+  const handleCreateEvent = async () => {
+    const title = String(createForm.title || '').trim()
+    if (!title) return
+    setSavingEvent(true)
+    try {
+      await createEvent({
+        event_type: createForm.event_type,
+        title,
+        role: createForm.role || undefined,
+        organization: createForm.organization || undefined,
+        location: createForm.location || undefined,
+        time_start: createForm.time_start || undefined,
+        time_end: createForm.time_end || undefined,
+        description: createForm.description || undefined,
+        tags: splitTags(createForm.tags_text),
+      })
+      setCreateForm(EMPTY_EVENT_FORM)
+      setShowCreate(false)
+      setActiveTab('events')
+      loadData()
+    } catch {} finally {
+      setSavingEvent(false)
     }
   }
 
-  const handleSaveEvent = async (id: string, fields: Record<string, any>) => {
-    try {
-      const payload: Record<string, any> = {}
-      for (const [k, v] of Object.entries(fields)) {
-        if (v !== undefined && v !== '') payload[k] = v
-        else if (k === 'description') payload[k] = ''
-      }
-      await updateEvent(id, payload)
-      setEvents(prev => prev.map(e => e.id === id ? {
-        ...e,
-        title: payload.title ?? e.title,
-        organization: payload.organization ?? e.organization,
-        role: payload.role ?? e.role,
-        time_start: payload.time_start ?? e.time_start,
-        time_end: payload.time_end ?? e.time_end,
-        description: payload.description ?? e.description,
-        details: payload.details ?? e.details,
-      } : e))
-      showToast('已保存')
-    } catch {
-      showToast('保存失败', 'error')
-    }
+  const handleConfirm = async (id: string) => {
+    await confirmEvent(id).catch(() => {})
+    loadData()
   }
 
-  const handleConfirmEvent = async (id: string) => {
-    try {
-      await confirmEvent(id)
-      setEvents(prev => prev.map(e => e.id === id ? { ...e, status: 'confirmed' } : e))
-      showToast('已确认')
-    } catch { showToast('操作失败', 'error') }
+  const handleArchive = async (id: string) => {
+    await archiveEvent(id).catch(() => {})
+    loadData()
   }
 
-  const handleRemoveEvent = async (id: string) => {
-    try {
-      await archiveEvent(id)
-      setEvents(prev => prev.filter(e => e.id !== id))
-      showToast('已删除')
-    } catch { showToast('操作失败', 'error') }
-  }
-
-  const openEditModal = (event: EventData) => {
-    setEditingEvent(event)
-    setModalOpen(true)
-  }
-
-  // Add a blank new section
-  const handleAddSection = (type: string) => {
-    setAddingType(type)
-    // Create a blank event
-    const blank: EventData = {
-      id: `new-${Date.now()}`,
-      type: type as any,
-      title: '',
-      organization: '',
-      role: '',
-      time_start: '',
-      time_end: '',
-      description: '',
-      status: 'draft',
-      tags: [],
-      details: {},
-    }
-    setEvents(prev => [blank, ...prev])
-    setEditingEvent(blank)
-    setModalOpen(true)
-  }
-
-  // Group events by type
-  const grouped = events.reduce((acc, ev) => {
-    const t = ev.type || 'custom'
+  // ── Grouped events ──────────────────────────────────────────
+  const grouped = events.reduce((acc: Record<string, any[]>, ev: any) => {
+    const t = ev.event_type || 'custom'
     if (!acc[t]) acc[t] = []
     acc[t].push(ev)
     return acc
-  }, {} as Record<string, EventData[]>)
+  }, {})
 
-  const groupOrder = ['work', 'education', 'project', 'certification', 'award', 'publication', 'open_source', 'custom']
-    .filter(t => grouped[t]?.length)
-
-  // Check which addable types already exist — show all 4 always
-  const existingTypes = new Set(groupOrder)
-
-  if (loading) {
-    return (
-      <div className="max-w-5xl mx-auto px-6 py-8 space-y-4">
-        {[1, 2, 3, 4].map(i => <div key={i} className="h-24 bg-white rounded-lg border animate-pulse" />)}
-      </div>
-    )
-  }
+  const groupOrder = EVENT_ORDER.filter(t => grouped[t]?.length)
 
   return (
-    <div className="max-w-5xl mx-auto px-6 py-8">
-      <div className="grid grid-cols-[300px_1fr] gap-8">
-        {/* ====================== LEFT COLUMN ====================== */}
-        <div className="space-y-4">
-          {/* Profile Card */}
-          <div className="bg-white rounded-xl border p-6 space-y-5">
-            {/* Avatar */}
-            <div className="flex items-center gap-4">
-              <div className="w-14 h-14 rounded-full bg-gradient-to-br from-[#1B4A8F] to-[#2563EB] flex items-center justify-center text-white text-xl font-bold shrink-0">
-                {(profile?.preferred_name || profile?.legal_name || '?')[0]}
-              </div>
-              <div>
-                <h2 className="text-lg font-bold text-[#1A1A2E]">
-                  {profile?.preferred_name || profile?.legal_name || '未设置姓名'}
-                </h2>
-                {profile?.headline && (
-                  <p className="text-sm text-[#5A6A7A]">{profile.headline}</p>
-                )}
-              </div>
-            </div>
-
-            {/* Contact info */}
-            <div className="space-y-2 pt-1 border-t">
-              {profile?.email && (
-                <div className="flex items-center gap-2 text-sm text-[#5A6A7A]">
-                  <svg className="w-4 h-4 text-[#8E9BAE] shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75" /></svg>
-                  <span className="truncate">{profile.email}</span>
-                </div>
-              )}
-              {profile?.phone && (
-                <div className="flex items-center gap-2 text-sm text-[#5A6A7A]">
-                  <svg className="w-4 h-4 text-[#8E9BAE] shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20.25 3.75v4.5m0-4.5h-4.5m4.5 0l-6 6m3 12c-8.284 0-15-6.716-15-15V4.5A2.25 2.25 0 014.5 2.25h1.372c.516 0 .966.351 1.091.852l1.106 4.423c.11.44-.054.902-.417 1.173l-1.293.97a1.062 1.062 0 00-.38 1.21 12.035 12.035 0 007.143 7.143c.441.162.928-.004 1.21-.38l.97-1.293a1.125 1.125 0 011.173-.417l4.423 1.106c.5.125.852.575.852 1.091V19.5a2.25 2.25 0 01-2.25 2.25h-2.25z" /></svg>
-                  <span>{profile.phone}</span>
-                </div>
-              )}
-              {profile?.location_city && (
-                <div className="flex items-center gap-2 text-sm text-[#5A6A7A]">
-                  <svg className="w-4 h-4 text-[#8E9BAE] shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" /></svg>
-                  <span>{profile.location_city}</span>
-                </div>
-              )}
-              {!profile?.email && !profile?.phone && (
-                <p className="text-xs text-[#8E9BAE]">上传简历后可自动识别联系方式</p>
-              )}
-            </div>
-
-            {/* Target info */}
-            {profile?.target_roles?.length > 0 && (
-              <div className="border-t pt-3">
-                <p className="text-[11px] font-semibold text-[#8E9BAE] uppercase mb-2">求职意向</p>
-                <div className="flex flex-wrap gap-1">
-                  {profile.target_roles.map((r: string) => (
-                    <span key={r} className="px-2 py-1 bg-[#EEF4FF] text-[#1B4A8F] text-xs rounded-md">{r}</span>
-                  ))}
-                </div>
-                {profile.target_cities?.length > 0 && (
-                  <p className="text-xs text-[#5A6A7A] mt-2 flex items-center gap-1">
-                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" /></svg>
-                    {profile.target_cities.join(' · ')}
-                  </p>
-                )}
-              </div>
-            )}
-
-            {/* Action buttons */}
-            <div className="border-t pt-3 space-y-2">
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploading}
-                className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-[#1B4A8F] text-white rounded-lg text-sm font-medium hover:bg-[#2563EB] disabled:opacity-50 transition-colors"
-              >
-                {uploading ? (
-                  <span className="flex items-center gap-2">
-                    <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
-                    {uploadStage || '处理中...'}
-                  </span>
-                ) : '📄 导入简历'}
-              </button>
-              <button
-                onClick={() => setShowIngestPanel(!showIngestPanel)}
-                className="w-full flex items-center justify-center gap-2 px-4 py-3 border border-[#D0D5DD] text-[#5A6A7A] rounded-lg text-sm font-medium hover:bg-gray-50 hover:text-[#1B4A8F] transition-colors"
-              >
-                ✍️ 文字/链接输入
-              </button>
-              <input ref={fileInputRef} type="file" accept=".pdf,.docx,.doc,.md,.txt" onChange={handleFileSelect} className="hidden" />
-            </div>
-
-            {/* Ingest panel */}
-            {showIngestPanel && (
-              <div className="border-t pt-3 space-y-3">
-                <textarea
-                  value={ingestText}
-                  onChange={e => setIngestText(e.target.value)}
-                  placeholder="粘贴或输入你的职业经历、项目描述、成就...&#10;&#10;例如：&#10;2023-至今 字节跳动 高级前端工程师&#10;负责抖音电商商家平台的前端架构..."
-                  rows={5}
-                  className="w-full px-3 py-2 text-sm border border-[#E5E7EB] rounded-lg resize-none outline-none focus:border-[#1B4A8F]"
-                />
-                <textarea
-                  value={ingestUrls}
-                  onChange={e => setIngestUrls(e.target.value)}
-                  placeholder="粘贴链接，每行一个&#10;例如：&#10;https://github.com/yourname/project&#10;https://linkedin.com/in/yourname"
-                  rows={2}
-                  className="w-full px-3 py-2 text-sm border border-[#E5E7EB] rounded-lg resize-none outline-none focus:border-[#1B4A8F]"
-                />
-                <button
-                  onClick={handleIngestSubmit}
-                  disabled={uploading}
-                  className="w-full px-4 py-2 bg-[#059669] text-white rounded-lg text-sm font-medium hover:bg-[#047857] disabled:opacity-50 transition-colors"
-                >
-                  {uploading ? 'AI 解析中...' : '发送给 AI 解析'}
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* ====================== RIGHT COLUMN ====================== */}
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex flex-wrap items-start justify-between gap-5">
         <div>
-          {groupOrder.length === 0 && !loading && (
-            <div className="bg-white border border-dashed rounded-xl p-12 text-center">
-              <div className="text-4xl mb-3">📋</div>
-              <p className="text-sm font-medium text-[#1A1A2E] mb-1">还没有职业经历</p>
-              <p className="text-xs text-[#5A6A7A]">上传简历或手动添加你的职业经历</p>
+          <p className="text-xs font-extrabold text-app-blue-ink">职业资料库</p>
+          <h1 className="mt-1 text-[32px] font-black tracking-normal leading-tight">职业档案</h1>
+          <p className="mt-2 max-w-[680px] text-sm leading-6 text-app-muted">上传一次，保留来源，审核提取结果。这里沉淀的是之后智能体认识你的身份上下文，不只是一次性简历。</p>
+        </div>
+        <div className="flex gap-2">
+          <button className="btn" onClick={() => setShowCreate(true)}>手动新增经历</button>
+          <button className="btn primary" onClick={() => fileRef.current?.click()}>添加材料</button>
+          <input ref={fileRef} type="file" accept=".pdf,.docx,.doc,.md,.txt" onChange={handleFile} className="hidden" />
+        </div>
+      </div>
+
+      <div className="grid items-start gap-5 xl:grid-cols-[430px_1fr]">
+        {/* ── LEFT COLUMN ── */}
+        <div className="space-y-3">
+          {/* Unified input */}
+          <div className="app-card p-5">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-xl font-black">统一输入</h2>
+              <span className="badge-cyan">源材料</span>
+            </div>
+            <div>
+              <div className="mb-4 rounded-[22px] bg-[#fff0d6] p-4 text-sm font-semibold leading-6 text-[#86581f]">
+                当前版本会先保存源材料；自动解析成经历事件还没有接入。保存材料后，可以用右上角“手动新增经历”把内容整理成结构化档案。
+              </div>
+              <div
+                onClick={() => fileRef.current?.click()}
+                className="grid h-[178px] cursor-pointer place-items-center rounded-[26px] border-2 border-dashed border-[#d8cec4] bg-[#f8f4ef] text-center transition-colors hover:border-app-blue"
+              >
+                <div>
+                  <div className="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-[18px] bg-white text-xl font-black text-app-ink shadow-sm">↑</div>
+                  <h3 className="text-base font-black">拖入简历、作品集、绩效评估</h3>
+                  <p className="mt-1 text-xs font-semibold text-app-muted">文件、链接、粘贴文字都进入同一个入口</p>
+                </div>
+              </div>
+              <div className="my-4 h-px bg-app-line-soft" />
+              <textarea
+                className="input min-h-[110px] resize-y"
+                placeholder="粘贴简历片段、项目笔记、自我评估、BOSS/拉勾/猎聘岗位描述..."
+                value={ingestText}
+                onChange={e => setIngestText(e.target.value)}
+              />
+              <textarea
+                className="input mt-2 min-h-[50px] resize-y"
+                placeholder="粘贴链接，每行一个&#10;例如：https://github.com/yourname/project&#10;https://linkedin.com/in/yourname"
+                value={ingestUrls}
+                onChange={e => setIngestUrls(e.target.value)}
+              />
+              <button
+                className="btn primary mt-3 w-full"
+                onClick={handleIngest}
+                disabled={uploading}
+              >
+                {uploading ? '保存中...' : '保存为源材料'}
+              </button>
+            </div>
+          </div>
+
+          {showCreate && (
+            <div className="app-card p-5">
+              <div className="mb-4 flex items-center justify-between">
+                <h2 className="text-xl font-black">新增职业经历</h2>
+                <button className="text-sm font-black text-app-muted hover:text-app-ink" onClick={() => setShowCreate(false)}>关闭</button>
+              </div>
+              <EventForm form={createForm} setForm={setCreateForm} />
+              <button className="btn primary mt-3 w-full" onClick={handleCreateEvent} disabled={savingEvent || !String(createForm.title || '').trim()}>
+                {savingEvent ? '保存中...' : '保存经历'}
+              </button>
             </div>
           )}
 
-          <div className="space-y-10">
-            {groupOrder.map(type => {
-              const typeMeta = EVENT_TYPE_COLORS[type] || EVENT_TYPE_COLORS.custom
-              const list = (grouped[type] || []).sort((a, b) =>
-                (b.time_start || '').localeCompare(a.time_start || '')
-              )
-
-              return (
-                <section key={type}>
-                  {/* Section header */}
-                  <div className="flex items-center gap-2 mb-4">
-                    <div className="w-1 h-5 rounded-full" style={{ backgroundColor: typeMeta.bar }} />
-                    <h3 className="text-base font-semibold text-[#1A1A2E]">{typeMeta.label}</h3>
-                    <span className="text-sm text-[#8E9BAE]">({list.length})</span>
+          {/* Source list */}
+          <div className="app-card p-5">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-xl font-black">源材料</h2>
+              <span className="badge-gray">{sources.length} 份</span>
+            </div>
+            <div className="space-y-3">
+              {sources.slice(0, 5).map((s: any, i: number) => (
+                <div key={s.id} className="flex gap-3 rounded-[20px] bg-[#f8f4ef] p-3">
+                  <div className={`source-dot ${s.parse_status === 'parsed' ? 'confirmed' : ''}`}>
+                    S{i+1}
                   </div>
-
-                  {/* Cards */}
-                  <div className="space-y-3">
-                    {list.map(event => (
-                      <div
-                        key={event.id}
-                        onClick={() => openEditModal(event)}
-                        className="bg-white rounded-lg border border-[#E5E7EB] p-4 hover:shadow-md hover:border-[#1B4A8F]/20 cursor-pointer transition-all group"
-                      >
-                        <div className="flex items-start gap-3">
-                          {/* Type icon */}
-                          <div
-                            className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 text-sm"
-                            style={{ backgroundColor: typeMeta.bg }}
-                          >
-                            {type === 'work' ? '💼' : type === 'education' ? '🎓' : type === 'project' ? '🚀' : '📌'}
-                          </div>
-
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center justify-between">
-                              <h4 className="text-sm font-semibold text-[#1A1A2E] truncate">
-                                {event.title || '未命名事件'}
-                              </h4>
-                              {event.status === 'draft' && (
-                                <span className="text-[10px] px-1.5 py-0.5 bg-[#FEF3C7] text-[#D97706] rounded-full shrink-0 ml-2">待审核</span>
-                              )}
-                            </div>
-
-                            {(event.organization || event.role) && (
-                              <p className="text-sm text-[#5A6A7A] mt-0.5 truncate">
-                                {[event.organization, event.role].filter(Boolean).join(' · ')}
-                              </p>
-                            )}
-
-                            <div className="flex items-center gap-3 mt-2">
-                              {(event.time_start || event.time_end) && (
-                                <span className="text-xs text-[#8E9BAE]">
-                                  {event.time_start || ''}{event.time_end ? ` — ${event.time_end}` : ''}
-                                </span>
-                              )}
-                              {event.tags?.length > 0 && (
-                                <div className="flex gap-1 flex-wrap">
-                                  {event.tags.map((t: string) => (
-                                    <span key={t} className="text-[10px] px-1.5 py-0.5 bg-[#F3F4F6] text-[#5A6A7A] rounded">{t}</span>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-
-                            {event.description && (
-                              <p className="text-xs text-[#5A6A7A] mt-2 line-clamp-2">{event.description}</p>
-                            )}
-                          </div>
-
-                          {/* Hover indicator */}
-                          <svg className="w-4 h-4 text-[#D0D5DD] group-hover:text-[#1B4A8F] shrink-0 mt-2 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                          </svg>
-                        </div>
-                      </div>
-                    ))}
+                  <div>
+                    <h3 className="text-sm font-semibold">{s.title}</h3>
+                    <p className="text-xs text-app-muted">
+                      {s.source_type === 'file' ? '文件' : '文本'} · {s.parse_status === 'parsed' ? '已解析' : s.parse_status === 'uploaded' ? '已保存，待整理' : s.parse_status}
+                    </p>
                   </div>
-                </section>
-              )
-            })}
-          </div>
-
-          {/* ===== Add Section ===== */}
-          <div className="mt-10 pt-6 border-t border-dashed">
-            <p className="text-[11px] font-semibold text-[#8E9BAE] uppercase mb-3">添加 Section</p>
-            <div className="flex gap-3">
-              {ADDABLE_SECTIONS.map(s => (
-                <button
-                  key={s.type}
-                  onClick={() => handleAddSection(s.type)}
-                  className="flex items-center gap-2 px-4 py-2.5 border border-dashed border-[#D0D5DD] rounded-lg text-sm text-[#5A6A7A] hover:border-[#1B4A8F] hover:text-[#1B4A8F] hover:bg-[#EEF4FF] transition-all"
-                >
-                  <span className="text-base">{s.icon}</span>
-                  <span>+ {s.label}</span>
-                </button>
+                </div>
               ))}
+              {sources.length === 0 && (
+                <p className="text-xs text-app-muted">还没有源材料，上传简历或粘贴经历开始</p>
+              )}
             </div>
           </div>
         </div>
+
+        {/* ── RIGHT COLUMN ── */}
+        <div className="space-y-3">
+          {/* Metric cards */}
+          <div className="grid grid-cols-3 gap-3">
+            <div className="rounded-[26px] bg-[#f4c4ca] p-5">
+              <p className="text-[28px] font-extrabold leading-none mb-1">{readiness?.total_events || 0}</p>
+              <p className="text-[13px] font-bold text-app-ink/58">职业事件</p>
+            </div>
+            <div className="rounded-[26px] bg-[#c5efdf] p-5">
+              <p className="text-[28px] font-extrabold leading-none mb-1">{readiness?.confirmed_events || 0}</p>
+              <p className="text-[13px] font-bold text-app-ink/58">已确认</p>
+            </div>
+            <div className="rounded-[26px] bg-[#f8d7aa] p-5">
+              <p className="text-[28px] font-extrabold leading-none mb-1">{readiness?.needs_review || 0}</p>
+              <p className="text-[13px] font-bold text-app-ink/58">待审核</p>
+            </div>
+          </div>
+
+          {/* Tabs: Timeline | Claims | Profile */}
+          <div className="inline-flex overflow-hidden rounded-full border border-app-line bg-white/78 p-1">
+            {[
+              { key: 'events', label: '时间线' },
+              { key: 'sources', label: '源材料' },
+            ].map(t => (
+              <button
+                key={t.key}
+                onClick={() => setActiveTab(t.key as any)}
+                className={'h-[34px] rounded-full border-0 px-4 font-extrabold text-sm ' +
+                  (activeTab === t.key ? 'bg-app-ink text-white' : 'bg-transparent text-app-muted')}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Timeline */}
+          {activeTab === 'events' && (
+            <div className="app-card p-5">
+              <div>
+                <div className="space-y-5">
+                  {loading && <p className="text-sm text-app-muted">正在加载职业经历...</p>}
+                  {!loading && groupOrder.length === 0 && (
+                    <div className="rounded-[24px] border border-dashed border-[#d8cec4] bg-white/58 p-6 text-center">
+                      <p className="text-sm font-black">还没有职业经历</p>
+                      <p className="mt-1 text-xs font-semibold text-app-muted">点击“手动新增经历”，先建立第一条工作、项目或教育经历。</p>
+                      <button className="btn primary mt-4" onClick={() => setShowCreate(true)}>新增经历</button>
+                    </div>
+                  )}
+                  {groupOrder.map(type => {
+                    const typeMeta = EVENT_TYPE_CONFIG[type] || EVENT_TYPE_CONFIG.custom
+                    return (
+                      <div key={type}>
+                        <div className="flex items-center gap-2 mb-2">
+                          <div className="h-3 w-3 rounded-full" style={{ background: typeMeta.bar }} />
+                          <span className="text-[12px] font-black text-app-ink">{typeMeta.label}</span>
+                        </div>
+                        <div className="space-y-3">
+                          {grouped[type].map((ev: any) => {
+                            const status = STATUS_CONFIG[ev.status] || STATUS_CONFIG.draft
+                            return editingId === ev.id ? (
+                              <div key={ev.id} className="space-y-2 rounded-[22px] border border-app-blue/30 bg-white/78 p-4">
+                                <input className="input text-sm" value={editForm.title} onChange={e => setEditForm({...editForm, title: e.target.value})} placeholder="标题" />
+                                <div className="grid grid-cols-2 gap-2">
+                                  <input className="input text-sm" value={editForm.organization} onChange={e => setEditForm({...editForm, organization: e.target.value})} placeholder="公司/组织" />
+                                  <input className="input text-sm" value={editForm.role} onChange={e => setEditForm({...editForm, role: e.target.value})} placeholder="职位/角色" />
+                                </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                  <input className="input text-sm" value={editForm.time_start} onChange={e => setEditForm({...editForm, time_start: e.target.value})} placeholder="开始时间，如 2025-06" />
+                                  <input className="input text-sm" value={editForm.time_end} onChange={e => setEditForm({...editForm, time_end: e.target.value})} placeholder="结束时间，如 2025-09" />
+                                </div>
+                                <input className="input text-sm" value={editForm.location} onChange={e => setEditForm({...editForm, location: e.target.value})} placeholder="地点" />
+                                <textarea className="input text-sm min-h-[60px]" value={editForm.description} onChange={e => setEditForm({...editForm, description: e.target.value})} placeholder="描述" />
+                                <input className="input text-sm" value={editForm.tags_text} onChange={e => setEditForm({...editForm, tags_text: e.target.value})} placeholder="标签，用逗号分隔" />
+                                <div className="flex gap-2 justify-end">
+                                  <button className="btn text-xs h-8" onClick={() => setEditingId(null)}>取消</button>
+                                  <button className="btn primary text-xs h-8" onClick={saveEdit}>保存</button>
+                                </div>
+                              </div>
+                            ) : (
+                              <div key={ev.id} className="flex cursor-pointer justify-between gap-3 rounded-[22px] p-4 transition hover:shadow-panel" style={{ background: typeMeta.bg }} onClick={() => startEdit(ev)}>
+                                <div>
+                                  <h3 className="text-sm font-semibold">{ev.title}</h3>
+                                  <p className="text-xs text-app-muted mt-0.5">
+                                    {[ev.organization, ev.time_start, ev.time_end && `— ${ev.time_end}`].filter(Boolean).join(' · ')}
+                                  </p>
+                                  {ev.description && <p className="text-xs text-app-muted mt-1 line-clamp-2">{ev.description}</p>}
+                                  <div className="mt-2 flex flex-wrap gap-2">
+                                    {ev.status !== 'confirmed' && (
+                                      <button
+                                        className="badge-green"
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          handleConfirm(ev.id)
+                                        }}
+                                      >
+                                        确认
+                                      </button>
+                                    )}
+                                    {ev.status !== 'archived' && (
+                                      <button
+                                        className="badge-gray"
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          handleArchive(ev.id)
+                                        }}
+                                      >
+                                        归档
+                                      </button>
+                                    )}
+                                  </div>
+                                  {ev.tags?.length > 0 && (
+                                    <div className="flex gap-1.5 mt-1.5 flex-wrap">
+                                      {ev.tags.map((t: string) => <span key={t} className="badge-blue text-[11px]">{t}</span>)}
+                                    </div>
+                                  )}
+                                </div>
+                                <span className={`${status.cls} h-fit text-[11px]`}>{status.label}</span>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'sources' && (
+            <div className="app-card p-5">
+              <div className="space-y-3">
+                {sources.map((s: any, i: number) => (
+                  <div key={s.id} className="flex gap-3 rounded-[20px] bg-[#f8f4ef] p-3">
+                    <div className={`source-dot ${s.parse_status === 'parsed' ? 'confirmed' : ''}`}>S{i+1}</div>
+                    <div>
+                      <h3 className="text-sm font-semibold">{s.title}</h3>
+                      <p className="text-xs text-app-muted">{s.source_type === 'file' ? '文件' : '文本'} · {s.parse_status === 'uploaded' ? '已保存，待整理' : s.parse_status} · {s.created_at}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* ===== Edit Modal ===== */}
-      <EventEditModal
-        event={editingEvent}
-        open={modalOpen}
-        onClose={() => { setModalOpen(false); setEditingEvent(null) }}
-        onSave={handleSaveEvent}
-        onConfirm={handleConfirmEvent}
-        onDelete={() => {
-          if (editingEvent) handleRemoveEvent(editingEvent.id)
-          setModalOpen(false)
-          setEditingEvent(null)
-        }}
-      />
-
-      {/* ===== Toast ===== */}
-      {toast && (
-        <div className={`fixed bottom-6 right-6 px-4 py-2 rounded-lg text-sm font-medium shadow-lg z-[60] ${toast.type === 'error' ? 'bg-[#DC2626] text-white' : 'bg-[#1A1A2E] text-white'}`}>
-          {toast.message}
-        </div>
-      )}
     </div>
   )
+}
+
+function EventForm({ form, setForm }: { form: Record<string, any>; setForm: (form: Record<string, any>) => void }) {
+  return (
+    <div className="space-y-2">
+      <select className="input" value={form.event_type} onChange={e => setForm({ ...form, event_type: e.target.value })}>
+        {EVENT_TYPE_OPTIONS.map((option) => (
+          <option key={option.key} value={option.key}>{option.label}</option>
+        ))}
+      </select>
+      <input className="input" value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} placeholder="标题，例如：AI 简历评估器 / 产品运营实习" />
+      <div className="grid grid-cols-2 gap-2">
+        <input className="input" value={form.organization} onChange={e => setForm({ ...form, organization: e.target.value })} placeholder="公司/学校/组织" />
+        <input className="input" value={form.role} onChange={e => setForm({ ...form, role: e.target.value })} placeholder="角色/职位" />
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <input className="input" value={form.time_start} onChange={e => setForm({ ...form, time_start: e.target.value })} placeholder="开始时间，如 2025-06" />
+        <input className="input" value={form.time_end} onChange={e => setForm({ ...form, time_end: e.target.value })} placeholder="结束时间，如 2025-09" />
+      </div>
+      <input className="input" value={form.location} onChange={e => setForm({ ...form, location: e.target.value })} placeholder="地点，例如：北京 / 远程" />
+      <textarea className="input min-h-[92px]" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} placeholder="描述这段经历：职责、成果、指标、使用的方法或工具。" />
+      <input className="input" value={form.tags_text} onChange={e => setForm({ ...form, tags_text: e.target.value })} placeholder="标签，用逗号分隔，例如：产品分析，智能体，简历评估" />
+    </div>
+  )
+}
+
+function splitTags(value: string | undefined) {
+  return String(value || '')
+    .split(/[，,]/)
+    .map(tag => tag.trim())
+    .filter(Boolean)
 }

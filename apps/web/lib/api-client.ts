@@ -1,64 +1,109 @@
-// API 客户端
+// API Client V2 — centralized bearer token, clears on 401
+import { getStoredToken, clearToken } from './auth'
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
 async function fetchAPI<T>(path: string, options?: RequestInit): Promise<T> {
+  const headers: Record<string, string> = {}
+
+  if (!(options?.body instanceof FormData)) {
+    headers['Content-Type'] = 'application/json'
+  }
+
+  if (typeof window !== 'undefined') {
+    const token = getStoredToken()
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`
+    }
+  }
+
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
     ...options,
+    headers: { ...headers, ...(options?.headers as Record<string, string> || {}) },
   })
+  if (res.status === 401) {
+    clearToken()
+  }
   if (!res.ok) throw new Error(`API Error: ${res.status}`)
   return res.json()
 }
 
-// Sources
-export const uploadSource = async (file: File) => {
+// Auth re-exports (new contract from lib/auth.ts)
+export {
+  requestAuthCode,
+  verifyAuthCode,
+  signup,
+  login,
+  getGoogleLoginUrl,
+  getCurrentUser,
+  logout,
+  getStoredToken,
+  storeToken,
+  clearToken,
+} from './auth'
+export type { AuthUser, AuthResponse } from './auth'
+
+export const emailSignup = (email: string, password: string, name: string) =>
+  fetchAPI('/api/auth/signup', { method: 'POST', body: JSON.stringify({ email, password, name }) })
+
+export const emailLogin = (email: string, password: string) =>
+  fetchAPI('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) })
+
+export const getMe = () => fetchAPI('/api/auth/me')
+
+// Dashboard
+export const getDashboardSummary = () => fetchAPI('/api/dashboard/summary')
+export const getDashboardActivity = () => fetchAPI('/api/dashboard/activity')
+export const getDashboardRecommendations = () => fetchAPI('/api/dashboard/recommendations')
+
+// Vault — Sources
+export const createSource = (data: { text: string; urls: string[] }) =>
+  fetchAPI('/api/vault/sources', { method: 'POST', body: JSON.stringify(data) })
+
+export const uploadSource = (file: File) => {
   const form = new FormData()
   form.append('file', file)
-  // Don't set Content-Type — browser auto-sets multipart boundary
-  return fetchAPI<{ source_id: string; job_id: string }>('/api/sources/upload', {
-    method: 'POST',
-    body: form,
-    headers: {},
-  } as RequestInit)
+  return fetchAPI('/api/vault/sources/upload', { method: 'POST', body: form })
 }
 
-export const ingestMultiSource = async (data: { text: string; urls: string[] }) =>
-  fetchAPI<{ source_id: string; job_id: string }>('/api/sources/ingest', {
-    method: 'POST',
-    body: JSON.stringify(data),
-  })
+export const getSources = () => fetchAPI('/api/vault/sources')
 
-export const getSources = () => fetchAPI<any[]>('/api/sources')
+// Vault — Events
+export const createEvent = (data: {
+  event_type: string; title: string; role?: string; organization?: string;
+  location?: string; time_start?: string; time_end?: string; description?: string;
+  details_json?: Record<string, any>; tags?: string[]
+}) => fetchAPI('/api/vault/events', { method: 'POST', body: JSON.stringify(data) })
 
-// Events
-export const getEvents = (params?: { status?: string; type?: string }) => {
-  const query = new URLSearchParams()
-  if (params?.status) query.set('status', params.status)
-  if (params?.type) query.set('type', params.type)
-  const qs = query.toString()
-  return fetchAPI<any[]>(`/api/events${qs ? `?${qs}` : ''}`)
+export const getEvents = (params?: { status?: string; event_type?: string }) => {
+  const q = new URLSearchParams()
+  if (params?.status) q.set('status', params.status)
+  if (params?.event_type) q.set('event_type', params.event_type)
+  const qs = q.toString()
+  return fetchAPI(`/api/vault/events${qs ? `?${qs}` : ''}`)
 }
 
 export const updateEvent = (id: string, data: Record<string, any>) =>
-  fetchAPI<any>(`/api/events/${id}`, { method: 'PATCH', body: JSON.stringify(data) })
+  fetchAPI(`/api/vault/events/${id}`, { method: 'PATCH', body: JSON.stringify(data) })
 
 export const confirmEvent = (id: string) =>
-  fetchAPI<any>(`/api/events/${id}/confirm`, { method: 'POST' })
+  fetchAPI(`/api/vault/events/${id}/confirm`, { method: 'POST' })
 
 export const archiveEvent = (id: string) =>
-  fetchAPI<any>(`/api/events/${id}/archive`, { method: 'POST' })
+  fetchAPI(`/api/vault/events/${id}/archive`, { method: 'POST' })
 
-// Profile
-export const getProfile = () => fetchAPI<any>('/api/profile')
-
+// Vault — Profile
+export const getProfile = () => fetchAPI('/api/vault/profile')
 export const updateProfile = (data: Record<string, any>) =>
-  fetchAPI<any>('/api/profile', { method: 'PATCH', body: JSON.stringify(data) })
+  fetchAPI('/api/vault/profile', { method: 'PATCH', body: JSON.stringify(data) })
 
-// Targets
-export const createTarget = (data: { jd_raw: string; company?: string; role?: string }) =>
-  fetchAPI<any>('/api/targets', { method: 'POST', body: JSON.stringify(data) })
+// Vault — Claims
+export const getClaims = (eventId?: string) =>
+  fetchAPI(`/api/vault/claims${eventId ? `?event_id=${eventId}` : ''}`)
 
-export const getTargets = () => fetchAPI<any[]>('/api/targets')
+// Vault — Review & Readiness
+export const getReviewQueue = () => fetchAPI('/api/vault/review-queue')
+export const getReadiness = () => fetchAPI('/api/vault/readiness')
 
 // Jobs
-export const getJob = (id: string) => fetchAPI<{ status: string; result?: any }>(`/api/jobs/${id}`)
+export const getJob = (id: string) => fetchAPI(`/api/jobs/${id}`)

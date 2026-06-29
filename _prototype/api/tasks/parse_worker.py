@@ -72,8 +72,9 @@ def _try_fetch_url(url: str) -> str:
 
 
 def _write_events(session, source_id: str, user_id, result: dict):
-    """将 LLM 提取结果写入 CareerEvent 表"""
+    """将 LLM 提取结果写入 CareerEvent 表和 Claim 表"""
     events = result.get("events", [])
+    from models import Claim
     for evt in events:
         career_event = CareerEvent(
             user_id=user_id,
@@ -87,12 +88,24 @@ def _write_events(session, source_id: str, user_id, result: dict):
             time_precision=evt.get("time_precision", "month"),
             description=evt.get("description"),
             details=evt.get("details", {}),
-            claims=evt.get("claims", []),
             tags=evt.get("tags", []),
             status="draft",
             visibility="private",
         )
         session.add(career_event)
+        session.flush()  # 获取 career_event.id
+
+        # 将 claims 写入独立的 Claim 表
+        claims = evt.get("claims", [])
+        for claim_text in claims:
+            claim = Claim(
+                user_id=user_id,
+                event_id=career_event.id,
+                text=claim_text,
+                status="draft",
+            )
+            session.add(claim)
+
     return len(events)
 
 

@@ -11,6 +11,7 @@ from sqlmodel import Session, select
 
 from database import get_session
 from models import SourceMaterial, BackgroundJob, User
+from auth_deps import get_current_user_id
 from config import settings
 
 router = APIRouter(prefix="/api/sources", tags=["sources"])
@@ -36,6 +37,7 @@ class MultiSourceInput(BaseModel):
 @router.post("/ingest")
 async def ingest_multi_source(
     body: MultiSourceInput,
+    user_id: str = Depends(get_current_user_id),
     session: Session = Depends(get_session),
 ):
     """混合输入：文字 + URL 列表 → 创建解析任务"""
@@ -45,7 +47,7 @@ async def ingest_multi_source(
     # 创建 source 记录
     title = body.text.strip()[:80] if body.text.strip() else ", ".join(body.urls[:2])
     source = SourceMaterial(
-        user_id=uuid.uuid4(),  # TODO: JWT user_id
+        user_id=user_id,
         source_type="note",
         title=title or "手动输入",
         original_filename="手动输入",
@@ -86,6 +88,7 @@ async def ingest_multi_source(
 @router.post("/upload")
 async def upload_source(
     file: UploadFile = File(...),
+    user_id: str = Depends(get_current_user_id),
     session: Session = Depends(get_session),
 ):
     """上传文件并创建解析任务"""
@@ -120,7 +123,7 @@ async def upload_source(
 
     # 创建 source 记录
     source = SourceMaterial(
-        user_id=uuid.uuid4(),  # TODO: 从 JWT 获取真实 user_id
+        user_id=user_id,
         source_type=source_type,
         title=file.filename or "未命名文件",
         original_filename=file.filename or "",

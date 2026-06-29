@@ -1,6 +1,5 @@
-"""Career Copilot API — 数据库引擎"""
-from sqlmodel import SQLModel, create_engine
-from sqlmodel import Session as DBSession
+"""Career Copilot API V2 — 数据库引擎"""
+from sqlmodel import SQLModel, create_engine, Session as DBSession
 
 from config import settings
 

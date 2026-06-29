@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     debug: bool = False
 
     # Database
-    database_url: str = "postgresql://postgres:postgres@localhost:5432/career_copilot"
+    database_url: str = "sqlite:///./career_copilot.db"
 
     # Redis
     redis_url: str = "redis://localhost:6379/0"
@@ -22,6 +22,21 @@ class Settings(BaseSettings):
     s3_access_key: str = "minioadmin"
     s3_secret_key: str = "minioadmin"
     s3_bucket: str = "career-copilot"
+
+    # Auth feature flags
+    auth_allow_dev_fallback: bool = False
+    auth_dev_code_echo: bool = False
+    auth_code_expire_minutes: int = 5
+    auth_code_max_attempts: int = 5
+    auth_code_length: int = 6
+
+    # Google OAuth
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_redirect_uri: str = "http://localhost:8000/api/auth/google/callback"
+
+    # Web app URL (for OAuth redirects)
+    web_app_url: str = "http://localhost:3000"
 
     # AI Providers
     deepseek_api_key: str = ""

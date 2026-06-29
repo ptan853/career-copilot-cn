@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { EVENT_TYPE_COLORS, type EventType } from '@/lib/event-constants'
 
 export interface EventData {
@@ -42,8 +42,8 @@ export default function EventEditModal({ event, open, onClose, onSave, onConfirm
   const [extraFields, setExtraFields] = useState<{ key: string; value: string }[]>([])
   const [saving, setSaving] = useState(false)
 
-  // Sync form when event changes
-  const initForm = () => {
+  // Sync form when event changes — use useEffect, not render-body setState
+  useEffect(() => {
     if (!event) return
     setForm({
       title: event.title || '',
@@ -53,7 +53,6 @@ export default function EventEditModal({ event, open, onClose, onSave, onConfirm
       time_end: event.time_end || '',
       description: event.description || '',
     })
-    // Load extra fields from details (excluding known keys)
     if (event.details) {
       const known = ['title', 'organization', 'role', 'time_start', 'time_end', 'description']
       const extras = Object.entries(event.details)
@@ -63,30 +62,7 @@ export default function EventEditModal({ event, open, onClose, onSave, onConfirm
     } else {
       setExtraFields([])
     }
-  }
-
-  // Use effect to sync
-  const [lastEventId, setLastEventId] = useState<string | null>(null)
-  if (event && event.id !== lastEventId) {
-    setLastEventId(event.id)
-    setForm({
-      title: event.title || '',
-      organization: event.organization || '',
-      role: event.role || '',
-      time_start: event.time_start || '',
-      time_end: event.time_end || '',
-      description: event.description || '',
-    })
-    if (event.details) {
-      const known = ['title', 'organization', 'role', 'time_start', 'time_end', 'description']
-      const extras = Object.entries(event.details)
-        .filter(([k]) => !known.includes(k))
-        .map(([k, v]) => ({ key: k, value: String(v) }))
-      setExtraFields(extras)
-    } else {
-      setExtraFields([])
-    }
-  }
+  }, [event?.id])  // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!open || !event) return null
 
