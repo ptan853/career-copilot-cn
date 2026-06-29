@@ -1,9 +1,12 @@
-"""Sources 路由 — 文件上传与解析"""
+"""Sources 路由 — 文件上传 + 多源解析"""
 import uuid
+import json
 from pathlib import Path
 from datetime import datetime
+from typing import Optional
 
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Form
+from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from database import get_session
@@ -22,6 +25,63 @@ ALLOWED_MIME = {
     "image/jpeg",
 }
 
+
+# ─── Multi-source input ─────────────────────────────────────────────
+
+class MultiSourceInput(BaseModel):
+    text: str = ""
+    urls: list[str] = []
+
+
+@router.post("/ingest")
+async def ingest_multi_source(
+    body: MultiSourceInput,
+    session: Session = Depends(get_session),
+):
+    """混合输入：文字 + URL 列表 → 创建解析任务"""
+    if not body.text.strip() and not body.urls:
+        raise HTTPException(status_code=400, detail="请提供文字或至少一个链接")
+
+    # 创建 source 记录
+    title = body.text.strip()[:80] if body.text.strip() else ", ".join(body.urls[:2])
+    source = SourceMaterial(
+        user_id=uuid.uuid4(),  # TODO: JWT user_id
+        source_type="note",
+        title=title or "手动输入",
+        original_filename="手动输入",
+        mime_type="text/plain",
+        object_key="manual_input",
+        raw_text=body.text,
+        parse_status="uploaded",
+    )
+    session.add(source)
+    session.commit()
+    session.refresh(source)
+
+    # 创建后台任务
+    job = BackgroundJob(
+        user_id=source.user_id,
+        job_type="multi_source.parse",
+        payload={
+            "source_id": str(source.id),
+            "text": body.text,
+            "urls": body.urls,
+        },
+        status="queued",
+    )
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+
+    return {
+        "source_id": str(source.id),
+        "job_id": str(job.id),
+        "title": source.title,
+        "status": source.parse_status,
+    }
+
+
+# ─── File upload ────────────────────────────────────────────────────
 
 @router.post("/upload")
 async def upload_source(
@@ -50,7 +110,6 @@ async def upload_source(
     content = await file.read()
 
     # 保存到本地文件系统（后续替换为对象存储）
-    upload_dir = Path(settings.s3_endpoint.replace("http://", "").replace(":9000", ""))
     upload_dir = Path("/app/uploads")
     upload_dir.mkdir(parents=True, exist_ok=True)
 
@@ -91,6 +150,8 @@ async def upload_source(
         "status": source.parse_status,
     }
 
+
+# ─── List / Get / Delete ────────────────────────────────────────────
 
 @router.get("")
 def list_sources(session: Session = Depends(get_session)):
