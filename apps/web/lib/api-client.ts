@@ -24,12 +24,21 @@ export const getSources = () => fetchAPI<any[]>('/api/sources')
 
 // Events
 export const getEvents = (params?: { status?: string; type?: string }) => {
-  const query = new URLSearchParams(params || {}).toString()
-  return fetchAPI<any[]>(`/api/events${query ? `?${query}` : ''}`)
+  const query = new URLSearchParams()
+  if (params?.status) query.set('status', params.status)
+  if (params?.type) query.set('type', params.type)
+  const qs = query.toString()
+  return fetchAPI<any[]>(`/api/events${qs ? `?${qs}` : ''}`)
 }
+
+export const updateEvent = (id: string, data: Record<string, any>) =>
+  fetchAPI<any>(`/api/events/${id}`, { method: 'PATCH', body: JSON.stringify(data) })
 
 export const confirmEvent = (id: string) =>
   fetchAPI<any>(`/api/events/${id}/confirm`, { method: 'POST' })
+
+export const archiveEvent = (id: string) =>
+  fetchAPI<any>(`/api/events/${id}/archive`, { method: 'POST' })
 
 // Targets
 export const createTarget = (data: { jd_raw: string; company?: string; role?: string }) =>
