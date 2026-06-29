@@ -22,6 +22,12 @@ export const uploadSource = async (file: File) => {
   } as RequestInit)
 }
 
+export const ingestMultiSource = async (data: { text: string; urls: string[] }) =>
+  fetchAPI<{ source_id: string; job_id: string }>('/api/sources/ingest', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+
 export const getSources = () => fetchAPI<any[]>('/api/sources')
 
 // Events

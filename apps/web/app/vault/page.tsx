@@ -4,12 +4,13 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { type EventData } from '@/components/review-card'
 import EventEditModal from '@/components/event-edit-modal'
 import { EVENT_TYPE_COLORS } from '@/lib/event-constants'
-import { getEvents, updateEvent, confirmEvent, archiveEvent, uploadSource, getJob, getProfile } from '@/lib/api-client'
+import { getEvents, updateEvent, confirmEvent, archiveEvent, uploadSource, ingestMultiSource, getJob, getProfile } from '@/lib/api-client'
 
 const ADDABLE_SECTIONS = [
   { type: 'work' as const, label: '工作经历', icon: '💼' },
   { type: 'education' as const, label: '教育经历', icon: '🎓' },
   { type: 'project' as const, label: '项目经历', icon: '🚀' },
+  { type: 'custom' as const, label: '自定义', icon: '✨' },
 ]
 
 export default function ProfilePage() {
@@ -21,6 +22,9 @@ export default function ProfilePage() {
   const [editingEvent, setEditingEvent] = useState<EventData | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
   const [addingType, setAddingType] = useState<string | null>(null)
+  const [ingestText, setIngestText] = useState('')
+  const [ingestUrls, setIngestUrls] = useState('')
+  const [showIngestPanel, setShowIngestPanel] = useState(false)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -84,6 +88,31 @@ export default function ProfilePage() {
       pollJob(job_id)
     } catch (err: any) {
       showToast(err.message || '上传失败', 'error')
+      setUploading(false)
+      setUploadStage(null)
+    }
+  }
+
+  const handleIngestSubmit = async () => {
+    const text = ingestText.trim()
+    const urls = ingestUrls
+      .split('\n')
+      .map(s => s.trim())
+      .filter(s => s.startsWith('http'))
+    if (!text && urls.length === 0) {
+      showToast('请输入文字或粘贴链接', 'error')
+      return
+    }
+    setUploading(true)
+    setUploadStage('AI 正在分析...')
+    try {
+      const { job_id } = await ingestMultiSource({ text, urls })
+      setShowIngestPanel(false)
+      setIngestText('')
+      setIngestUrls('')
+      pollJob(job_id)
+    } catch (err: any) {
+      showToast(err.message || '提交失败', 'error')
       setUploading(false)
       setUploadStage(null)
     }
@@ -167,8 +196,8 @@ export default function ProfilePage() {
   const groupOrder = ['work', 'education', 'project', 'certification', 'award', 'publication', 'open_source', 'custom']
     .filter(t => grouped[t]?.length)
 
-  // Check which addable types already exist
-  const missingSections = ADDABLE_SECTIONS.filter(s => !groupOrder.includes(s.type))
+  // Check which addable types already exist — show all 4 always
+  const existingTypes = new Set(groupOrder)
 
   if (loading) {
     return (
@@ -243,12 +272,12 @@ export default function ProfilePage() {
               </div>
             )}
 
-            {/* Import button */}
-            <div className="border-t pt-3">
+            {/* Action buttons */}
+            <div className="border-t pt-3 space-y-2">
               <button
                 onClick={() => fileInputRef.current?.click()}
                 disabled={uploading}
-                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-[#1B4A8F] text-white rounded-lg text-sm font-medium hover:bg-[#2563EB] disabled:opacity-50 transition-colors"
+                className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-[#1B4A8F] text-white rounded-lg text-sm font-medium hover:bg-[#2563EB] disabled:opacity-50 transition-colors"
               >
                 {uploading ? (
                   <span className="flex items-center gap-2">
@@ -257,8 +286,41 @@ export default function ProfilePage() {
                   </span>
                 ) : '📄 导入简历'}
               </button>
+              <button
+                onClick={() => setShowIngestPanel(!showIngestPanel)}
+                className="w-full flex items-center justify-center gap-2 px-4 py-3 border border-[#D0D5DD] text-[#5A6A7A] rounded-lg text-sm font-medium hover:bg-gray-50 hover:text-[#1B4A8F] transition-colors"
+              >
+                ✍️ 文字/链接输入
+              </button>
               <input ref={fileInputRef} type="file" accept=".pdf,.docx,.doc,.md,.txt" onChange={handleFileSelect} className="hidden" />
             </div>
+
+            {/* Ingest panel */}
+            {showIngestPanel && (
+              <div className="border-t pt-3 space-y-3">
+                <textarea
+                  value={ingestText}
+                  onChange={e => setIngestText(e.target.value)}
+                  placeholder="粘贴或输入你的职业经历、项目描述、成就...&#10;&#10;例如：&#10;2023-至今 字节跳动 高级前端工程师&#10;负责抖音电商商家平台的前端架构..."
+                  rows={5}
+                  className="w-full px-3 py-2 text-sm border border-[#E5E7EB] rounded-lg resize-none outline-none focus:border-[#1B4A8F]"
+                />
+                <textarea
+                  value={ingestUrls}
+                  onChange={e => setIngestUrls(e.target.value)}
+                  placeholder="粘贴链接，每行一个&#10;例如：&#10;https://github.com/yourname/project&#10;https://linkedin.com/in/yourname"
+                  rows={2}
+                  className="w-full px-3 py-2 text-sm border border-[#E5E7EB] rounded-lg resize-none outline-none focus:border-[#1B4A8F]"
+                />
+                <button
+                  onClick={handleIngestSubmit}
+                  disabled={uploading}
+                  className="w-full px-4 py-2 bg-[#059669] text-white rounded-lg text-sm font-medium hover:bg-[#047857] disabled:opacity-50 transition-colors"
+                >
+                  {uploading ? 'AI 解析中...' : '发送给 AI 解析'}
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
