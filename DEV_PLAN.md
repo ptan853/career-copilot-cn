@@ -238,3 +238,71 @@ Phase 3: 增强       (第 9-12周) → 扩展、计费、迭代
 1. 对照验收标准逐条检查
 2. 标记未完成项到下一 Phase
 3. 确认没有架构上的技术债
+
+---
+
+## 八、GitHub 协作规范
+
+### 项目管理
+
+使用 **GitHub Projects** 跟踪进度：
+
+1. 在仓库页点击 Projects tab → New project → Board 视图
+2. 创建 4 列: `📋 Backlog` → `🚧 In Progress` → `👀 In Review` → `✅ Done`
+3. 将 DEV_PLAN.md 中的每个任务转成 Issue，挂到 Project
+
+### Issue 规范
+
+每个开发任务拆成独立的 Issue，标题格式：
+
+```
+[Phase 0] 用户认证 — 手机验证码登录
+[Phase 0] 文件上传 — PDF/DOCX 解析
+[Phase 1] 岗位管理 — JD 粘贴与 AI 分析
+```
+
+每个 Issue 必须包含：
+- 所属 Phase
+- 具体任务描述
+- Acceptance Criteria（验收标准）
+- 涉及范围标签（前端/后端/两端）
+
+### Branch 策略 — Trunk-based
+
+```
+main                        ← 始终可部署，受保护
+  └── feat/phone-auth       ← 一个 Issue 一个分支
+  └── feat/file-upload
+  └── fix/parse-timeout
+```
+
+规则：
+- 从 main 切分支，一个功能一个分支
+- 开发完成后开 PR → main
+- 自审通过后 Squash Merge
+- branch 命名: `feat/功能简称` 或 `fix/问题简称`
+
+### PR 流程
+
+1. 推送分支: `git push origin feat/xxx`
+2. 去 GitHub 开 Pull Request（仓库有 PR 模板）
+3. 填写模板、关联 Issue（`Closes #X`）
+4. 自审通过 → Squash merge → 删除分支
+
+### 保护 main 分支
+
+在仓库 Settings → Branches → Add rule:
+- Branch name pattern: `main`
+- ☑ Require a pull request before merging
+- ☑ Require status checks to pass before merging (后续加 CI 再用)
+
+### 当前状态
+
+项目处于 Phase 0 开发中，已完成:
+
+```
+✅ D0: 项目初始化
+✅ D1: 用户认证（后端 API）
+✅ D2: 文件上传与解析（后端 API）
+🔄 D3: 审核与展示（前端 UI 开发中）
+```
