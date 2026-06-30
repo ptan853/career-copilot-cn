@@ -152,8 +152,19 @@ export const updateProfile = (data: Record<string, any>) =>
   fetchAPI('/api/vault/profile', { method: 'PATCH', body: JSON.stringify(data) })
 
 // Vault — Claims
-export const getClaims = (eventId?: string) =>
-  fetchAPI(`/api/vault/claims${eventId ? `?event_id=${eventId}` : ''}`)
+export const getClaims = (params?: { event_id?: string }) => {
+  const q = params?.event_id ? `?event_id=${encodeURIComponent(params.event_id)}` : ''
+  return fetchAPI(`/api/vault/claims${q}`)
+}
+
+export const createClaim = (data: { event_id: string; claim_text: string; claim_type?: string; strength?: string }) =>
+  fetchAPI('/api/vault/claims', { method: 'POST', body: JSON.stringify(data) })
+
+export const updateClaim = (id: string, data: Record<string, any>) =>
+  fetchAPI(`/api/vault/claims/${id}`, { method: 'PATCH', body: JSON.stringify(data) })
+
+export const deleteClaim = (id: string) =>
+  fetchAPI(`/api/vault/claims/${id}`, { method: 'DELETE' })
 
 // Vault — Review & Readiness
 export const getReviewQueue = () => fetchAPI('/api/vault/review-queue')

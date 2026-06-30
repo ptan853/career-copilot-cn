@@ -153,6 +153,39 @@ def create_claim(
     return {"data": {"id": str(claim.id), "claim_text": claim.claim_text}}
 
 
+@router.patch("/claims/{claim_id}")
+def update_claim(
+    claim_id: str,
+    body: UpdateClaimBody,
+    user_id: str = Depends(get_current_user_id),
+    session: Session = Depends(get_session),
+):
+    claim = session.get(Claim, _uuid(claim_id))
+    if not claim or str(claim.user_id) != user_id:
+        raise HTTPException(status_code=404, detail="Claim not found")
+    update_data = body.model_dump(exclude_none=True)
+    for key, val in update_data.items():
+        setattr(claim, key, val)
+    session.add(claim)
+    session.commit()
+    session.refresh(claim)
+    return {"data": {"id": str(claim.id), "claim_text": claim.claim_text}, "message": "已更新"}
+
+
+@router.delete("/claims/{claim_id}")
+def delete_claim(
+    claim_id: str,
+    user_id: str = Depends(get_current_user_id),
+    session: Session = Depends(get_session),
+):
+    claim = session.get(Claim, _uuid(claim_id))
+    if not claim or str(claim.user_id) != user_id:
+        raise HTTPException(status_code=404, detail="Claim not found")
+    session.delete(claim)
+    session.commit()
+    return {"message": "已删除", "claim_id": claim_id}
+
+
 def _uuid(value: str) -> uuid.UUID:
     try:
         return uuid.UUID(value)

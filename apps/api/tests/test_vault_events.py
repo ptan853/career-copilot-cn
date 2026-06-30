@@ -242,3 +242,48 @@ def test_claim_endpoints_reject_cross_user_event(tmp_path):
         assert create_response.status_code == 404
         assert list_response.status_code == 404
         assert session.exec(select(Claim).where(Claim.career_event_id == event.id)).all() == []
+
+
+def test_claim_update_and_delete_are_user_scoped(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'claim_mutation.db'}", echo=False)
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        owner = User(email="claim-edit@example.com", display_name="Owner")
+        other = User(email="claim-edit-other@example.com", display_name="Other")
+        session.add(owner)
+        session.add(other)
+        session.commit()
+        session.refresh(owner)
+        session.refresh(other)
+
+        event = CareerEvent(user_id=owner.id, event_type="project", title="项目")
+        session.add(event)
+        session.commit()
+        session.refresh(event)
+
+        claim = Claim(user_id=owner.id, career_event_id=event.id, claim_text="旧事实")
+        session.add(claim)
+        session.commit()
+        session.refresh(claim)
+
+        other_client = _client_for_user(other, session)
+        try:
+            cross_update = other_client.patch(f"/api/vault/claims/{claim.id}", json={"claim_text": "越权"})
+            cross_delete = other_client.delete(f"/api/vault/claims/{claim.id}")
+        finally:
+            app.dependency_overrides.clear()
+
+        owner_client = _client_for_user(owner, session)
+        try:
+            update_response = owner_client.patch(f"/api/vault/claims/{claim.id}", json={"claim_text": "新事实"})
+            delete_response = owner_client.delete(f"/api/vault/claims/{claim.id}")
+        finally:
+            app.dependency_overrides.clear()
+
+        assert cross_update.status_code == 404
+        assert cross_delete.status_code == 404
+        assert update_response.status_code == 200
+        assert update_response.json()["data"]["claim_text"] == "新事实"
+        assert delete_response.status_code == 200
+        assert session.get(Claim, claim.id) is None
