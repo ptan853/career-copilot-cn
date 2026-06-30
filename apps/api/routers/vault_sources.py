@@ -12,7 +12,7 @@ from config import settings
 from database import get_session
 from models import SourceMaterial, BackgroundJob, CareerEvent, Claim, Evidence
 from auth_deps import get_current_user_id
-from services.file_reader import extract_text
+from services.ingestion import ingest_file
 
 router = APIRouter(prefix="/api/vault/sources", tags=["vault-sources"])
 
@@ -46,9 +46,10 @@ async def create_source(
     if not body.text.strip() and not body.urls:
         raise HTTPException(status_code=400, detail="请提供文字或至少一个链接")
 
+    user_uuid = uuid.UUID(str(user_id))
     title = body.text.strip()[:80] if body.text.strip() else (", ".join(body.urls[:2]))
     source = SourceMaterial(
-        user_id=user_id,
+        user_id=user_uuid,
         source_type="text",
         title=title or "手动输入",
         raw_text=body.text,
@@ -60,7 +61,7 @@ async def create_source(
     session.refresh(source)
 
     job = BackgroundJob(
-        user_id=user_id,
+        user_id=user_uuid,
         job_type="source_parse",
         payload={
             "source_id": str(source.id),
@@ -96,6 +97,7 @@ async def upload_source(
 
     mime = file.content_type or ""
     content = await file.read()
+    user_uuid = uuid.UUID(str(user_id))
 
     upload_dir = Path(settings.upload_dir)
     upload_dir.mkdir(parents=True, exist_ok=True)
@@ -104,30 +106,33 @@ async def upload_source(
     saved_path = upload_dir / f"{file_id}{ext}"
     saved_path.write_bytes(content)
 
-    # 提取文本
-    raw_text = ""
-    if "pdf" in mime or ext in (".pdf", ".docx", ".doc", ".txt", ".md"):
-        raw_text = extract_text(str(saved_path), mime)
-        if raw_text:
-            logger.info("extracted %d chars from %s", len(raw_text), file.filename)
-        else:
-            logger.warning("no text extracted from %s", file.filename)
+    ingested = ingest_file(str(saved_path), mime, title=file.filename or "未命名文件")
+    raw_text = ingested.content
+    if raw_text:
+        logger.info("ingested %d chars from %s", len(raw_text), file.filename)
+    else:
+        logger.warning("no text extracted from %s", file.filename)
 
     source = SourceMaterial(
-        user_id=user_id,
+        user_id=user_uuid,
         source_type="file",
         title=file.filename or "未命名文件",
         mime_type=mime,
         file_url=str(saved_path),
         raw_text=raw_text or None,
         parse_status="extracted" if raw_text else "uploaded",
+        metadata_json={
+            **ingested.metadata,
+            "content_type": ingested.content_type,
+            "warnings": ingested.warnings,
+        },
     )
     session.add(source)
     session.commit()
     session.refresh(source)
 
     job = BackgroundJob(
-        user_id=user_id,
+        user_id=user_uuid,
         job_type="source_parse",
         payload={"source_id": str(source.id), "file_path": str(saved_path)},
         status="queued",

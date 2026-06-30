@@ -18,9 +18,10 @@ from datetime import datetime
 import httpx
 from sqlmodel import Session, select
 
-from config import settings
 from database import engine
-from models import SourceMaterial, BackgroundJob, CareerEvent, Claim, Profile, Evidence
+from models import SourceMaterial, BackgroundJob, CareerEvent, Claim, Evidence
+from services.ingestion import IngestionError, ingest_url
+from services.llm_providers import LLMGenerateRequest, LLMMessage, OpenAICompatibleProvider, resolve_provider_config
 from services.parse_prompts import source_parse_system_prompt
 from services.source_parse import normalize_source_parse
 
@@ -66,40 +67,6 @@ def _scan_and_fetch(text: str) -> str:
     if fetched:
         return text + "\n\n===== 网页抓取内容 =====\n" + fetched
     return text
-
-
-def _resolve_api_key(user_id: str, session: Session) -> tuple[str, str]:
-    """解析用户使用的 OpenAI API key。
-
-    优先级：用户自填 key > 平台默认 key（.env 中的 PLATFORM_OPENAI_API_KEY）
-    """
-    # 尝试查用户 Profile
-    profile = session.exec(
-        select(Profile).where(Profile.user_id == user_id)
-    ).first()
-
-    if profile and profile.ai_api_key:
-        return profile.ai_api_key, "openai"
-
-    # 回退到平台默认 key
-    if settings.platform_openai_api_key:
-        return settings.platform_openai_api_key, "openai"
-
-    # 回退到 .env 中的个人 key
-    if settings.openai_api_key:
-        return settings.openai_api_key, "openai"
-
-    return "", "openai"
-
-
-def _resolve_api_base(provider: str) -> str:
-    """根据 provider 返回对应的 API base URL。"""
-    bases = {
-        "openai": settings.openai_api_base,
-        "deepseek": settings.deepseek_api_base,
-        "qwen": settings.qwen_api_base,
-    }
-    return bases.get(provider, settings.openai_api_base)
 
 
 def run_once() -> int:
@@ -150,16 +117,19 @@ def _execute_job(session: Session, job: BackgroundJob) -> None:
     if not source:
         raise ValueError(f"SourceMaterial {source_id} 不存在")
 
-    api_key, provider = _resolve_api_key(str(job.user_id), session)
-    api_base = _resolve_api_base(provider)
-
     text = source.raw_text or ""
 
     urls_from_payload = job.payload.get("urls", [])
     if urls_from_payload:
-        fetched = _fetch_urls(urls_from_payload)
-        if fetched:
-            text = text + "\n\n" + fetched
+        fetched_parts = []
+        for url in urls_from_payload:
+            try:
+                doc = ingest_url(url)
+                fetched_parts.append(f"\n[来源: {url}]\n{doc.content}")
+            except IngestionError as exc:
+                fetched_parts.append(f"\n[来源: {url} — 抓取失败: {exc}]")
+        if fetched_parts:
+            text = text + "\n\n" + "\n".join(fetched_parts)
 
     if text.strip():
         text = _scan_and_fetch(text)
@@ -186,10 +156,30 @@ def _execute_job(session: Session, job: BackgroundJob) -> None:
         logger.info("job %s dry-run complete", job.id)
         return
 
-    if not api_key:
-        raise ValueError("未配置 OpenAI API Key。请在设置中填写 OpenAI API Key，或联系管理员配置平台默认 Key。")
+    try:
+        config = resolve_provider_config(job.user_id, session)
+        result = OpenAICompatibleProvider(config).generate(
+            LLMGenerateRequest(
+                response_format="json",
+                messages=[
+                    LLMMessage(role="system", content=source_parse_system_prompt()),
+                    LLMMessage(role="user", content=text[:15000]),
+                ],
+            )
+        )
+        parsed = result.json_data or json.loads(result.text)
+    except Exception as exc:
+        message = str(exc)[:1000]
+        source.parse_status = "failed"
+        source.parse_error = message
+        job.status = "failed"
+        job.error_message = message
+        job.completed_at = datetime.utcnow()
+        session.add(source)
+        session.add(job)
+        session.commit()
+        return
 
-    parsed = _call_ai(api_base, api_key, source_parse_system_prompt(), text)
     normalized = normalize_source_parse(parsed)
 
     metadata = dict(source.metadata_json or {})
@@ -198,7 +188,8 @@ def _execute_job(session: Session, job: BackgroundJob) -> None:
         "source_subtype": normalized.source_subtype,
         "language": normalized.language,
         "ai_warnings": normalized.warnings,
-        "parse_model": settings.openai_model,
+        "parse_provider": result.provider,
+        "parse_model": result.model,
     })
     source.metadata_json = metadata
 
@@ -290,38 +281,6 @@ def _execute_job(session: Session, job: BackgroundJob) -> None:
         "job %s complete: %d events, %d claims",
         job.id, created_events, created_claims,
     )
-
-
-def _call_ai(api_base: str, api_key: str, system_prompt: str, user_input: str) -> dict:
-    """调用 OpenAI Chat Completions JSON 模式，返回解析后的 dict。"""
-    api_base = api_base.rstrip("/")
-
-    with httpx.Client(timeout=120) as client:
-        resp = client.post(
-            f"{api_base}/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": settings.openai_model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_input[:15000]},
-                ],
-                "temperature": 0.3,
-                "response_format": {"type": "json_object"},
-            },
-        )
-        resp.raise_for_status()
-        body = resp.json()
-        content = body["choices"][0]["message"]["content"]
-        return json.loads(content)
-
-
-def _call_deepseek(system_prompt: str, user_input: str) -> dict:
-    """兼容旧版调用（直接使用 settings 中的 key）。"""
-    return _call_ai(settings.openai_api_base, settings.openai_api_key, system_prompt, user_input)
 
 
 def _safe_enum(value: str, valid: list[str], fallback: str) -> str:
