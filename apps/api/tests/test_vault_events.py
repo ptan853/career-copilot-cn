@@ -77,14 +77,21 @@ def test_delete_event_removes_claims_and_evidence(tmp_path):
         session.commit()
         session.refresh(claim)
 
-        evidence = Evidence(
+        event_evidence = Evidence(
             user_id=user.id,
             source_material_id=source.id,
             career_event_id=event.id,
             claim_id=claim.id,
             quote="做了项目",
         )
-        session.add(evidence)
+        claim_only_evidence = Evidence(
+            user_id=user.id,
+            source_material_id=source.id,
+            claim_id=claim.id,
+            quote="claim-only evidence",
+        )
+        session.add(event_evidence)
+        session.add(claim_only_evidence)
         session.commit()
 
         client = _client_for_user(user, session)
@@ -97,3 +104,36 @@ def test_delete_event_removes_claims_and_evidence(tmp_path):
         assert session.get(CareerEvent, event.id) is None
         assert session.exec(select(Claim).where(Claim.career_event_id == event.id)).all() == []
         assert session.exec(select(Evidence).where(Evidence.career_event_id == event.id)).all() == []
+        assert session.exec(select(Evidence).where(Evidence.claim_id == claim.id)).all() == []
+
+
+def test_claim_endpoints_use_uuid_user_scope(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'claim_scope.db'}", echo=False)
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        user = User(email="claims@example.com", display_name="Claims User")
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+
+        event = CareerEvent(user_id=user.id, event_type="project", title="项目")
+        session.add(event)
+        session.commit()
+        session.refresh(event)
+
+        client = _client_for_user(user, session)
+        try:
+            create_response = client.post(
+                "/api/vault/claims",
+                json={"event_id": str(event.id), "claim_text": "完成核心功能"},
+            )
+            list_response = client.get(f"/api/vault/claims?event_id={event.id}")
+        finally:
+            app.dependency_overrides.clear()
+
+        assert create_response.status_code == 200
+        assert list_response.status_code == 200
+        claims = list_response.json()["data"]
+        assert len(claims) == 1
+        assert claims[0]["claim_text"] == "完成核心功能"

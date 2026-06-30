@@ -110,7 +110,8 @@ def list_claims(
     user_id: str = Depends(get_current_user_id),
     session: Session = Depends(get_session),
 ):
-    query = select(Claim).where(Claim.user_id == user_id)
+    user_uuid = _uuid(user_id)
+    query = select(Claim).where(Claim.user_id == user_uuid)
     if event_id:
         event_uuid = _uuid(event_id)
         event = session.get(CareerEvent, event_uuid)
@@ -138,12 +139,14 @@ def create_claim(
     user_id: str = Depends(get_current_user_id),
     session: Session = Depends(get_session),
 ):
-    event = session.get(CareerEvent, _uuid(body.event_id))
+    user_uuid = _uuid(user_id)
+    event_uuid = _uuid(body.event_id)
+    event = session.get(CareerEvent, event_uuid)
     if not event or str(event.user_id) != user_id:
         raise HTTPException(status_code=404, detail="Event not found")
     claim = Claim(
-        user_id=user_id,
-        career_event_id=body.event_id,
+        user_id=user_uuid,
+        career_event_id=event_uuid,
         claim_text=body.claim_text,
         claim_type=body.claim_type,
         strength=body.strength,

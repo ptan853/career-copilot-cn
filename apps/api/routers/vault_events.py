@@ -3,6 +3,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
+from sqlalchemy import or_
 from sqlmodel import Session, select
 from typing import Optional
 
@@ -174,11 +175,15 @@ def delete_event(
     if not event or str(event.user_id) != user_id:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    evidences = session.exec(select(Evidence).where(Evidence.career_event_id == event.id)).all()
+    claims = session.exec(select(Claim).where(Claim.career_event_id == event.id)).all()
+    claim_ids = [claim.id for claim in claims]
+    evidence_filter = Evidence.career_event_id == event.id
+    if claim_ids:
+        evidence_filter = or_(evidence_filter, Evidence.claim_id.in_(claim_ids))
+    evidences = session.exec(select(Evidence).where(evidence_filter)).all()
     for evidence in evidences:
         session.delete(evidence)
 
-    claims = session.exec(select(Claim).where(Claim.career_event_id == event.id)).all()
     for claim in claims:
         session.delete(claim)
 
