@@ -153,3 +153,49 @@ def test_normalize_source_parse_maps_section_from_event_type_and_forces_draft():
     assert result.events[0].section_type == "work"
     assert result.events[0].section_title == "工作经历"
     assert result.events[0].status == "draft"
+
+
+def test_normalize_source_parse_preserves_explicit_section_for_custom_events():
+    raw = {
+        "source_type": "resume",
+        "source_subtype": "resume",
+        "sections": [
+            {
+                "section_type": "project",
+                "section_title": "项目经历",
+                "events": [
+                    {
+                        "event_type": "custom",
+                        "title": "AI 求职助手",
+                    }
+                ],
+            }
+        ],
+    }
+
+    result = normalize_source_parse(raw)
+
+    assert result.events[0].section_type == "project"
+    assert result.events[0].section_title == "项目经历"
+
+
+def test_normalize_source_parse_clamps_invalid_time_precision():
+    raw = {
+        "source_type": "resume",
+        "source_subtype": "resume",
+        "sections": [
+            {
+                "events": [
+                    {
+                        "event_type": "project",
+                        "title": "AI 求职助手",
+                        "time_precision": "quarter",
+                    }
+                ],
+            }
+        ],
+    }
+
+    result = normalize_source_parse(raw)
+
+    assert result.events[0].time_precision == "unknown"

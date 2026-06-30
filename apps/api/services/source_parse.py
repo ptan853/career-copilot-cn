@@ -15,6 +15,8 @@ VALID_CLAIM_TYPES = {
 }
 
 VALID_STRENGTHS = {"confirmed", "inferred", "weak"}
+VALID_TIME_PRECISIONS = {"day", "month", "year", "unknown"}
+VALID_SECTION_TYPES = {"work", "project", "education", "credential", "research", "portfolio", "skill", "custom"}
 SECTION_BY_EVENT_TYPE = {
     "work": ("work", "工作经历"),
     "internship": ("work", "工作经历"),
@@ -130,8 +132,14 @@ def normalize_source_parse(raw: dict[str, Any]) -> NormalizedParseResult:
                 continue
             event_type = _safe_enum(raw_event.get("event_type"), VALID_EVENT_TYPES, "custom")
             mapped = event_type_to_section(event_type)
-            section_type = mapped["section_type"]
-            section_title = mapped["section_title"]
+            raw_section_type = _safe_enum(section.get("section_type"), VALID_SECTION_TYPES, "")
+            raw_section_title = _clean_string(section.get("section_title"))
+            if event_type == "custom" and raw_section_type and raw_section_title:
+                section_type = raw_section_type
+                section_title = raw_section_title
+            else:
+                section_type = mapped["section_type"]
+                section_title = mapped["section_title"]
             title = _clean_string(raw_event.get("title")) or "未命名事件"
 
             claims = []
@@ -171,7 +179,7 @@ def normalize_source_parse(raw: dict[str, Any]) -> NormalizedParseResult:
                 location=_clean_string(raw_event.get("location")),
                 time_start=_clean_string(raw_event.get("time_start")),
                 time_end=_clean_string(raw_event.get("time_end")),
-                time_precision=_clean_string(raw_event.get("time_precision")) or "month",
+                time_precision=_safe_enum(raw_event.get("time_precision"), VALID_TIME_PRECISIONS, "unknown"),
                 description=_clean_string(raw_event.get("description")),
                 details_json=_details(raw_event),
                 tags=raw_event.get("tags") if isinstance(raw_event.get("tags"), list) else [],
