@@ -89,3 +89,51 @@ def test_normalize_source_parse_flattens_sections_events_claims_and_evidence():
 def test_normalize_source_parse_ignores_legacy_flat_events_shape():
     result = normalize_source_parse({"events": [{"title": "旧格式"}], "claims": []})
     assert result.events == []
+
+
+def test_normalize_source_parse_rejects_jd_events():
+    raw = {
+        "source_type": "jd",
+        "source_subtype": "jd",
+        "sections": [
+            {
+                "section_type": "work",
+                "section_title": "工作经历",
+                "events": [
+                    {"event_type": "work", "title": "负责增长策略"}
+                ],
+            }
+        ],
+        "warnings": ["这是岗位描述。"],
+    }
+
+    result = normalize_source_parse(raw)
+
+    assert result.events == []
+    assert "这是岗位描述。" in result.warnings
+
+
+def test_normalize_source_parse_maps_section_from_event_type_and_forces_draft():
+    raw = {
+        "source_type": "resume",
+        "source_subtype": "resume",
+        "sections": [
+            {
+                "section_type": "credential",
+                "section_title": "奖项证书",
+                "events": [
+                    {
+                        "event_type": "internship",
+                        "title": "增长产品实习",
+                        "status": "needs_review",
+                    }
+                ],
+            }
+        ],
+    }
+
+    result = normalize_source_parse(raw)
+
+    assert result.events[0].section_type == "work"
+    assert result.events[0].section_title == "工作经历"
+    assert result.events[0].status == "draft"

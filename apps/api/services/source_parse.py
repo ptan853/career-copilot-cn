@@ -15,9 +15,6 @@ VALID_CLAIM_TYPES = {
 }
 
 VALID_STRENGTHS = {"confirmed", "inferred", "weak"}
-VALID_STATUSES = {"draft", "needs_review"}
-
-
 SECTION_BY_EVENT_TYPE = {
     "work": ("work", "工作经历"),
     "internship": ("work", "工作经历"),
@@ -123,6 +120,11 @@ def normalize_source_parse(raw: dict[str, Any]) -> NormalizedParseResult:
         warnings=raw.get("warnings") if isinstance(raw.get("warnings"), list) else [],
     )
 
+    if result.source_type == "jd" or result.source_subtype == "jd":
+        if not result.warnings:
+            result.warnings.append("输入内容被识别为岗位描述，未写入用户职业经历。")
+        return result
+
     sections = raw.get("sections") if isinstance(raw.get("sections"), list) else []
     for section in sections:
         if not isinstance(section, dict):
@@ -133,8 +135,8 @@ def normalize_source_parse(raw: dict[str, Any]) -> NormalizedParseResult:
                 continue
             event_type = _safe_enum(raw_event.get("event_type"), VALID_EVENT_TYPES, "custom")
             mapped = event_type_to_section(event_type)
-            section_type = _clean_string(section.get("section_type")) or mapped["section_type"]
-            section_title = _clean_string(section.get("section_title")) or mapped["section_title"]
+            section_type = mapped["section_type"]
+            section_title = mapped["section_title"]
             title = _clean_string(raw_event.get("title")) or "未命名事件"
 
             claims = []
@@ -178,7 +180,7 @@ def normalize_source_parse(raw: dict[str, Any]) -> NormalizedParseResult:
                 description=_clean_string(raw_event.get("description")),
                 details_json=_details(raw_event),
                 tags=raw_event.get("tags") if isinstance(raw_event.get("tags"), list) else [],
-                status=_safe_enum(raw_event.get("status"), VALID_STATUSES, "draft"),
+                status="draft",
                 confidence=raw_event.get("confidence") if isinstance(raw_event.get("confidence"), (int, float)) else None,
                 claims=claims,
                 evidence=evidence,
