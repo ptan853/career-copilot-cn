@@ -303,8 +303,8 @@ def get_me(
     session: Session = Depends(get_session),
 ):
     try:
-        user_uuid = uuid.UUID(user_id)
-    except ValueError:
+        user_uuid = user_id if isinstance(user_id, uuid.UUID) else uuid.UUID(user_id)
+    except (TypeError, ValueError):
         raise HTTPException(status_code=401, detail="Token 无效")
 
     user = session.get(User, user_uuid)

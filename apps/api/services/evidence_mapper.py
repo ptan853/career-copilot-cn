@@ -14,11 +14,11 @@ from models import JobTarget, JDAnalysis, CareerEvent, EvidenceMap, Evidence, Cl
 logger = logging.getLogger("evidence_mapper")
 
 
-def match_and_map(session: Session, job_target_id: str, user_id: str) -> EvidenceMap:
+def match_and_map(session: Session, job_target_id: str, user_id) -> EvidenceMap:
     """为主流程：对指定岗位执行证据映射，返回生成的 EvidenceMap。"""
     # 1. 加载岗位
     job = session.get(JobTarget, job_target_id)
-    if not job or str(job.user_id) != user_id:
+    if not job or job.user_id != user_id:
         raise ValueError("岗位不存在")
 
     # 2. 提取关键词

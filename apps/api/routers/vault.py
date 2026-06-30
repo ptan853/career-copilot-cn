@@ -1,5 +1,6 @@
 """Vault Profile / Claims / Review / Backup 路由 V2"""
 import uuid
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -7,10 +8,40 @@ from sqlmodel import Session, select
 from typing import Optional
 
 from database import get_session
-from models import Profile, CareerEvent, Claim
+from models import BackgroundJob, Evidence, Profile, CareerEvent, Claim, SourceMaterial
 from auth_deps import get_current_user_id
 
 router = APIRouter(prefix="/api/vault", tags=["vault"])
+
+
+@router.post("/clear")
+def clear_vault(
+    user_id: str = Depends(get_current_user_id),
+    session: Session = Depends(get_session),
+):
+    user_uuid = _uuid(user_id)
+
+    for evidence in session.exec(select(Evidence).where(Evidence.user_id == user_uuid)).all():
+        session.delete(evidence)
+
+    for claim in session.exec(select(Claim).where(Claim.user_id == user_uuid)).all():
+        session.delete(claim)
+
+    for event in session.exec(select(CareerEvent).where(CareerEvent.user_id == user_uuid)).all():
+        session.delete(event)
+
+    for job in session.exec(select(BackgroundJob).where(BackgroundJob.user_id == user_uuid)).all():
+        session.delete(job)
+
+    for source in session.exec(select(SourceMaterial).where(SourceMaterial.user_id == user_uuid)).all():
+        session.delete(source)
+
+    profile = session.exec(select(Profile).where(Profile.user_id == user_uuid)).first()
+    if profile:
+        session.delete(profile)
+
+    session.commit()
+    return {"message": "已清空职业档案"}
 
 # ============================================================
 # Profile
@@ -28,6 +59,11 @@ class UpdateProfileBody(BaseModel):
     summary: Optional[str] = None
     years_of_experience: Optional[int] = None
     language_preferences: Optional[list] = None
+    ai_provider: Optional[str] = None
+    ai_provider_name: Optional[str] = None
+    ai_api_base: Optional[str] = None
+    ai_model_name: Optional[str] = None
+    ai_api_key: Optional[str] = None
 
 
 def serialize_profile(profile: Profile) -> dict:
@@ -39,14 +75,80 @@ def serialize_profile(profile: Profile) -> dict:
         "location": profile.location,
         "target_locations": profile.target_locations,
         "target_roles": profile.target_roles,
-        "links": profile.links,
+        "links": normalize_profile_links(profile.links),
         "summary": profile.summary,
         "years_of_experience": profile.years_of_experience,
         "language_preferences": profile.language_preferences,
         "ai_provider": getattr(profile, "ai_provider", "openai") or "openai",
+        "ai_provider_name": getattr(profile, "ai_provider_name", None),
+        "ai_api_base": getattr(profile, "ai_api_base", None),
+        "ai_model_name": getattr(profile, "ai_model_name", None),
         "has_ai_api_key": bool(getattr(profile, "ai_api_key", None)),
         "updated_at": profile.updated_at.isoformat(),
     }
+
+
+def normalize_profile_links(links: list | None) -> list[dict]:
+    normalized = []
+    for item in links or []:
+        if isinstance(item, str):
+            raw = {"url": item}
+        elif isinstance(item, dict):
+            raw = dict(item)
+        else:
+            continue
+
+        url = _normalize_link_url(str(raw.get("url") or "").strip())
+        if not url:
+            continue
+
+        link_type = raw.get("link_type") or _infer_link_type(url)
+        normalized.append({
+            "label": raw.get("label") or _infer_link_label(link_type, url),
+            "url": url,
+            "link_type": link_type,
+            "show_in_materials": bool(raw.get("show_in_materials", True)),
+            "use_for_ai_parsing": bool(raw.get("use_for_ai_parsing", False)),
+            "parse_status": raw.get("parse_status") or "not_started",
+            "last_parse_error": raw.get("last_parse_error"),
+        })
+    return normalized
+
+
+def _normalize_link_url(url: str) -> str:
+    if not url:
+        return ""
+    if not url.startswith(("http://", "https://")):
+        url = f"https://{url}"
+    parsed = urlparse(url)
+    if parsed.netloc.lower() == "www.linkedin.com" and parsed.path.startswith("/in/") and not parsed.path.endswith("/"):
+        return f"{parsed.scheme}://{parsed.netloc}{parsed.path}/"
+    return url
+
+
+def _infer_link_type(url: str) -> str:
+    host = urlparse(url).netloc.lower()
+    path = urlparse(url).path
+    if host.endswith("linkedin.com") and path.startswith("/in/"):
+        return "linkedin_profile"
+    if host == "github.com":
+        parts = [part for part in path.split("/") if part]
+        if len(parts) >= 2:
+            return "github_repo"
+        return "github_profile"
+    if "portfolio" in host:
+        return "portfolio"
+    return "website"
+
+
+def _infer_link_label(link_type: str, url: str) -> str:
+    labels = {
+        "linkedin_profile": "LinkedIn",
+        "github_profile": "GitHub",
+        "github_repo": "GitHub",
+        "portfolio": "Portfolio",
+    }
+    return labels.get(link_type) or (urlparse(url).netloc or "Link")
 
 
 @router.get("/profile")
@@ -54,8 +156,9 @@ def get_profile(
     user_id: str = Depends(get_current_user_id),
     session: Session = Depends(get_session),
 ):
+    user_uuid = _uuid(user_id)
     profile = session.exec(
-        select(Profile).where(Profile.user_id == user_id)
+        select(Profile).where(Profile.user_id == user_uuid)
     ).first()
     if not profile:
         return {"data": None}
@@ -68,13 +171,16 @@ def update_profile(
     user_id: str = Depends(get_current_user_id),
     session: Session = Depends(get_session),
 ):
+    user_uuid = _uuid(user_id)
     profile = session.exec(
-        select(Profile).where(Profile.user_id == user_id)
+        select(Profile).where(Profile.user_id == user_uuid)
     ).first()
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found")
 
     update_data = body.model_dump(exclude_none=True)
+    if "links" in update_data:
+        update_data["links"] = normalize_profile_links(update_data["links"])
     for key, val in update_data.items():
         setattr(profile, key, val)
     session.add(profile)
@@ -111,7 +217,7 @@ def list_claims(
     if event_id:
         event_uuid = _uuid(event_id)
         event = session.get(CareerEvent, event_uuid)
-        if not event or str(event.user_id) != user_id:
+        if not event or event.user_id != user_uuid:
             raise HTTPException(status_code=404, detail="Event not found")
         query = query.where(Claim.career_event_id == event_uuid)
     claims = session.exec(query).all()
@@ -138,7 +244,7 @@ def create_claim(
     user_uuid = _uuid(user_id)
     event_uuid = _uuid(body.event_id)
     event = session.get(CareerEvent, event_uuid)
-    if not event or str(event.user_id) != user_id:
+    if not event or event.user_id != user_uuid:
         raise HTTPException(status_code=404, detail="Event not found")
     claim = Claim(
         user_id=user_uuid,
@@ -160,8 +266,9 @@ def update_claim(
     user_id: str = Depends(get_current_user_id),
     session: Session = Depends(get_session),
 ):
+    user_uuid = _uuid(user_id)
     claim = session.get(Claim, _uuid(claim_id))
-    if not claim or str(claim.user_id) != user_id:
+    if not claim or claim.user_id != user_uuid:
         raise HTTPException(status_code=404, detail="Claim not found")
     update_data = body.model_dump(exclude_none=True)
     for key, val in update_data.items():
@@ -178,15 +285,18 @@ def delete_claim(
     user_id: str = Depends(get_current_user_id),
     session: Session = Depends(get_session),
 ):
+    user_uuid = _uuid(user_id)
     claim = session.get(Claim, _uuid(claim_id))
-    if not claim or str(claim.user_id) != user_id:
+    if not claim or claim.user_id != user_uuid:
         raise HTTPException(status_code=404, detail="Claim not found")
     session.delete(claim)
     session.commit()
     return {"message": "已删除", "claim_id": claim_id}
 
 
-def _uuid(value: str) -> uuid.UUID:
+def _uuid(value: str | uuid.UUID) -> uuid.UUID:
+    if isinstance(value, uuid.UUID):
+        return value
     try:
         return uuid.UUID(value)
     except ValueError:

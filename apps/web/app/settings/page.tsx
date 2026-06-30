@@ -5,6 +5,33 @@ import { useRouter } from 'next/navigation'
 import { getProfile, updateProfile, getCurrentUser, logout } from '@/lib/api-client'
 import type { AuthUser } from '@/lib/api-client'
 
+const providerPresets: Record<string, { label: string; baseUrl: string; modelName: string; help: string }> = {
+  bailian_qwen: {
+    label: '阿里云百炼 / 通义千问（国内推荐）',
+    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    modelName: 'qwen-plus',
+    help: '适合国内用户，第一版用于文字、文件解析后的 Markdown 和公开网页文本解析。',
+  },
+  openai: {
+    label: 'OpenAI',
+    baseUrl: 'https://api.openai.com',
+    modelName: 'gpt-4.1-mini',
+    help: '适合海外网络环境，后续会作为 hosted tools 能力的参考实现。',
+  },
+  kimi: {
+    label: 'Kimi / Moonshot',
+    baseUrl: 'https://api.moonshot.cn/v1',
+    modelName: 'kimi-k2',
+    help: '适合中文长文本分析，第一版先作为普通模型调用。',
+  },
+  custom_openai_compatible: {
+    label: '自定义 OpenAI 兼容接口',
+    baseUrl: '',
+    modelName: '',
+    help: '用于 DeepSeek、OneAPI、LiteLLM、本地模型或公司内部网关。',
+  },
+}
+
 export default function SettingsPage() {
   const router = useRouter()
   const [user, setUser] = useState<AuthUser | null>(null)
@@ -29,7 +56,10 @@ export default function SettingsPage() {
           years_of_experience: data.years_of_experience ?? '',
           target_roles_text: (data.target_roles || []).join('，'),
           target_locations_text: (data.target_locations || []).join('，'),
-          ai_provider: 'openai',
+          ai_provider: data.ai_provider || 'bailian_qwen',
+          ai_provider_name: data.ai_provider_name || '',
+          ai_api_base: data.ai_api_base || providerPresets[data.ai_provider || 'bailian_qwen']?.baseUrl || '',
+          ai_model_name: data.ai_model_name || providerPresets[data.ai_provider || 'bailian_qwen']?.modelName || '',
           ai_api_key: '',
           has_ai_api_key: Boolean(data.has_ai_api_key),
         })
@@ -53,7 +83,10 @@ export default function SettingsPage() {
         target_locations: profile.target_locations_text
           ? profile.target_locations_text.split(/[，,]/).map((s: string) => s.trim()).filter(Boolean)
           : undefined,
-        ai_provider: 'openai',
+        ai_provider: profile.ai_provider || 'bailian_qwen',
+        ai_provider_name: profile.ai_provider_name || undefined,
+        ai_api_base: profile.ai_api_base || undefined,
+        ai_model_name: profile.ai_model_name || undefined,
         ai_api_key: profile.ai_api_key || undefined,
       })
       setMessage('已保存')
@@ -164,7 +197,7 @@ export default function SettingsPage() {
           <div className="flex items-center justify-between mb-4">
             <div>
               <h2 className="text-xl font-black">AI 配置</h2>
-              <p className="text-xs text-app-muted mt-1">第一版统一使用 OpenAI，先跑通材料解析闭环。</p>
+              <p className="text-xs text-app-muted mt-1">选择用于职业档案解析的模型服务商。文件和链接会先在本地转成文本，再交给模型。</p>
             </div>
             <span className="badge-amber">可选</span>
           </div>
@@ -173,11 +206,52 @@ export default function SettingsPage() {
               <span className="text-xs text-app-muted font-semibold">AI 服务商</span>
               <select
                 className="input"
-                value="openai"
-                disabled
+                value={profile.ai_provider || 'bailian_qwen'}
+                onChange={e => {
+                  const preset = providerPresets[e.target.value]
+                  setProfile({
+                    ...profile,
+                    ai_provider: e.target.value,
+                    ai_provider_name: preset?.label || '',
+                    ai_api_base: preset?.baseUrl || '',
+                    ai_model_name: preset?.modelName || '',
+                  })
+                }}
               >
-                <option value="openai">OpenAI</option>
+                {Object.entries(providerPresets).map(([value, preset]) => (
+                  <option key={value} value={value}>{preset.label}</option>
+                ))}
               </select>
+            </label>
+            <div className="rounded-[14px] bg-app-panel-soft p-3 text-xs leading-relaxed text-app-muted">
+              {providerPresets[profile.ai_provider || 'bailian_qwen']?.help}
+            </div>
+            <label className="flex flex-col gap-1.5">
+              <span className="text-xs text-app-muted font-semibold">配置名称</span>
+              <input
+                className="input"
+                value={profile.ai_provider_name || ''}
+                onChange={e => setProfile({ ...profile, ai_provider_name: e.target.value })}
+                placeholder="例如：我的百炼 Qwen"
+              />
+            </label>
+            <label className="flex flex-col gap-1.5">
+              <span className="text-xs text-app-muted font-semibold">Base URL</span>
+              <input
+                className="input"
+                value={profile.ai_api_base || ''}
+                onChange={e => setProfile({ ...profile, ai_api_base: e.target.value })}
+                placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1"
+              />
+            </label>
+            <label className="flex flex-col gap-1.5">
+              <span className="text-xs text-app-muted font-semibold">模型名称</span>
+              <input
+                className="input"
+                value={profile.ai_model_name || ''}
+                onChange={e => setProfile({ ...profile, ai_model_name: e.target.value })}
+                placeholder="qwen-plus"
+              />
             </label>
             <label className="flex flex-col gap-1.5">
               <div className="flex items-center justify-between">
@@ -195,7 +269,7 @@ export default function SettingsPage() {
               />
             </label>
             <div className="rounded-[14px] bg-[#fff8e7] p-3 text-xs text-[#86581f]">
-              服务器不会回传已保存的完整 Key。当前版本先支持 OpenAI；DeepSeek/Qwen 会在核心解析链路稳定后再作为适配器加入。
+              服务器不会回传已保存的完整 Key。第一版先支持 OpenAI-compatible 调用，不启用 hosted web search / file search。
             </div>
             <button className="btn primary" onClick={handleSave} disabled={saving}>
               {saving ? '保存中...' : '保存 AI 配置'}

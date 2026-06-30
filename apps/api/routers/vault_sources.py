@@ -8,8 +8,9 @@ from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from config import settings
 from database import get_session
-from models import SourceMaterial, BackgroundJob
+from models import SourceMaterial, BackgroundJob, CareerEvent, Claim, Evidence
 from auth_deps import get_current_user_id
 from services.file_reader import extract_text
 
@@ -96,7 +97,7 @@ async def upload_source(
     mime = file.content_type or ""
     content = await file.read()
 
-    upload_dir = Path("/app/uploads")
+    upload_dir = Path(settings.upload_dir)
     upload_dir.mkdir(parents=True, exist_ok=True)
     file_id = str(uuid.uuid4())
     ext = Path(file.filename or "file").suffix or ".bin"
@@ -119,7 +120,7 @@ async def upload_source(
         mime_type=mime,
         file_url=str(saved_path),
         raw_text=raw_text or None,
-        parse_status="uploaded",
+        parse_status="extracted" if raw_text else "uploaded",
     )
     session.add(source)
     session.commit()
@@ -162,6 +163,7 @@ def list_sources(
                 "title": s.title,
                 "source_type": s.source_type,
                 "parse_status": s.parse_status,
+                "raw_text_preview": (s.raw_text or "")[:600],
                 "created_at": s.created_at.isoformat(),
             }
             for s in sources
@@ -175,8 +177,9 @@ def get_source(
     user_id: str = Depends(get_current_user_id),
     session: Session = Depends(get_session),
 ):
-    source = session.get(SourceMaterial, source_id)
-    if not source or str(source.user_id) != user_id:
+    user_uuid = uuid.UUID(str(user_id))
+    source = session.get(SourceMaterial, uuid.UUID(source_id))
+    if not source or source.user_id != user_uuid:
         raise HTTPException(status_code=404, detail="Source not found")
     return {
         "data": {
@@ -198,9 +201,47 @@ def delete_source(
     user_id: str = Depends(get_current_user_id),
     session: Session = Depends(get_session),
 ):
-    source = session.get(SourceMaterial, source_id)
-    if not source or str(source.user_id) != user_id:
+    user_uuid = uuid.UUID(str(user_id))
+    source = session.get(SourceMaterial, uuid.UUID(source_id))
+    if not source or source.user_id != user_uuid:
         raise HTTPException(status_code=404, detail="Source not found")
+
+    events = session.exec(
+        select(CareerEvent).where(CareerEvent.user_id == user_uuid, CareerEvent.source_id == source.id)
+    ).all()
+    event_ids = [event.id for event in events]
+    claims = []
+    if event_ids:
+        claims = session.exec(select(Claim).where(Claim.career_event_id.in_(event_ids))).all()
+    claim_ids = [claim.id for claim in claims]
+
+    evidence_query = select(Evidence).where(Evidence.user_id == user_uuid, Evidence.source_material_id == source.id)
+    evidences = session.exec(evidence_query).all()
+    if event_ids:
+        evidences.extend(session.exec(select(Evidence).where(Evidence.career_event_id.in_(event_ids))).all())
+    if claim_ids:
+        evidences.extend(session.exec(select(Evidence).where(Evidence.claim_id.in_(claim_ids))).all())
+
+    seen_evidence_ids = set()
+    for evidence in evidences:
+        if evidence.id in seen_evidence_ids:
+            continue
+        seen_evidence_ids.add(evidence.id)
+        session.delete(evidence)
+
+    for claim in claims:
+        session.delete(claim)
+
+    for event in events:
+        session.delete(event)
+
+    jobs = session.exec(
+        select(BackgroundJob).where(BackgroundJob.user_id == user_uuid, BackgroundJob.job_type == "source_parse")
+    ).all()
+    for job in jobs:
+        if str((job.payload or {}).get("source_id")) == str(source.id):
+            session.delete(job)
+
     session.delete(source)
     session.commit()
     return {"message": "已删除"}

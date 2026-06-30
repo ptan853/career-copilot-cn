@@ -4,6 +4,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from config import settings
+from database import init_db
 from routers.auth import router as auth_router
 from routers.core import router as core_router
 from routers.vault import router as vault_router
@@ -11,7 +13,14 @@ from routers.vault_sources import router as vault_sources_router
 from routers.vault_events import router as vault_events_router
 from routers.jobs import router as jobs_router
 from routers.artifacts import router as artifacts_router
-from database import init_db
+
+
+def cors_origins() -> list[str]:
+    return [
+        origin.strip()
+        for origin in settings.cors_origins.split(",")
+        if origin.strip()
+    ]
 
 
 @asynccontextmanager
@@ -28,7 +37,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

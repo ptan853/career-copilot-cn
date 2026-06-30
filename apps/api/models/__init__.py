@@ -74,6 +74,9 @@ class Profile(SQLModel, table=True):
     target_roles: list = Field(default=[], sa_column=Column(JSON))
     application_answers_json: dict = Field(default={}, sa_column=Column(JSON))
     ai_provider: str = "openai"
+    ai_provider_name: Optional[str] = None
+    ai_api_base: Optional[str] = None
+    ai_model_name: Optional[str] = None
     ai_api_key: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)

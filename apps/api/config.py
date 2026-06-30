@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     s3_access_key: str = "minioadmin"
     s3_secret_key: str = "minioadmin"
     s3_bucket: str = "career-copilot"
+    upload_dir: str = "./uploads"
 
     # Auth feature flags
     auth_allow_dev_fallback: bool = False
@@ -37,11 +38,18 @@ class Settings(BaseSettings):
 
     # Web app URL (for OAuth redirects)
     web_app_url: str = "http://localhost:3000"
+    cors_origins: str = "http://localhost:3000,http://localhost:3001"
 
     # AI Providers
     openai_api_key: str = ""
     openai_api_base: str = "https://api.openai.com"
     openai_model: str = "gpt-4.1-mini"
+    bailian_api_key: str = ""
+    bailian_api_base: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    bailian_model: str = "qwen-plus"
+    kimi_api_key: str = ""
+    kimi_api_base: str = "https://api.moonshot.cn/v1"
+    kimi_model: str = "kimi-k2"
     deepseek_api_key: str = ""
     deepseek_api_base: str = "https://api.deepseek.com"
     qwen_api_key: str = ""
@@ -49,6 +57,8 @@ class Settings(BaseSettings):
 
     # Platform default API key (for new user trial quota)
     platform_openai_api_key: str = ""
+    platform_bailian_api_key: str = ""
+    platform_kimi_api_key: str = ""
     platform_deepseek_api_key: str = ""
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}

@@ -135,7 +135,7 @@ def get_job(
     session: Session = Depends(get_session),
 ):
     job = session.get(JobTarget, job_id)
-    if not job or str(job.user_id) != user_id:
+    if not job or job.user_id != user_id:
         raise HTTPException(status_code=404, detail="岗位不存在")
 
     # 顺带查 JDAnalysis（如果存在）
@@ -183,7 +183,7 @@ def update_job(
     session: Session = Depends(get_session),
 ):
     job = session.get(JobTarget, job_id)
-    if not job or str(job.user_id) != user_id:
+    if not job or job.user_id != user_id:
         raise HTTPException(status_code=404, detail="岗位不存在")
 
     update_data = body.model_dump(exclude_none=True)
@@ -215,7 +215,7 @@ def delete_job(
     session: Session = Depends(get_session),
 ):
     job = session.get(JobTarget, job_id)
-    if not job or str(job.user_id) != user_id:
+    if not job or job.user_id != user_id:
         raise HTTPException(status_code=404, detail="岗位不存在")
     session.delete(job)
     session.commit()
@@ -254,7 +254,7 @@ def get_evidence_map(
     """获取岗位的证据映射"""
     # 验证岗位存在且属于用户
     job = session.get(JobTarget, job_id)
-    if not job or str(job.user_id) != user_id:
+    if not job or job.user_id != user_id:
         raise HTTPException(status_code=404, detail="岗位不存在")
 
     em = session.exec(

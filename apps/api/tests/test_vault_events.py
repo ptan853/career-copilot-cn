@@ -4,7 +4,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 from auth_deps import get_current_user_id
 from database import get_session
 from main import app
-from models import CareerEvent, Claim, Evidence, SourceMaterial, User
+from models import BackgroundJob, CareerEvent, Claim, Evidence, Profile, SourceMaterial, User
 
 
 def _client_for_user(user: User, session: Session) -> TestClient:
@@ -287,3 +287,125 @@ def test_claim_update_and_delete_are_user_scoped(tmp_path):
         assert update_response.json()["data"]["claim_text"] == "新事实"
         assert delete_response.status_code == 200
         assert session.get(Claim, claim.id) is None
+
+
+def test_delete_source_removes_associated_parse_results(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'delete_source.db'}", echo=False)
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        user = User(email="source-owner@example.com", display_name="Source Owner")
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+
+        source = SourceMaterial(user_id=user.id, source_type="file", title="resume.pdf")
+        session.add(source)
+        session.commit()
+        session.refresh(source)
+
+        event = CareerEvent(user_id=user.id, event_type="work", title="工作", source_id=source.id)
+        session.add(event)
+        session.commit()
+        session.refresh(event)
+
+        claim = Claim(user_id=user.id, career_event_id=event.id, claim_text="增长 20%")
+        session.add(claim)
+        session.commit()
+        session.refresh(claim)
+
+        evidence = Evidence(
+            user_id=user.id,
+            source_material_id=source.id,
+            career_event_id=event.id,
+            claim_id=claim.id,
+            quote="增长 20%",
+        )
+        job = BackgroundJob(
+            user_id=user.id,
+            job_type="source_parse",
+            status="queued",
+            payload={"source_id": str(source.id)},
+        )
+        session.add(evidence)
+        session.add(job)
+        session.commit()
+
+        client = _client_for_user(user, session)
+        try:
+            response = client.delete(f"/api/vault/sources/{source.id}")
+        finally:
+            app.dependency_overrides.clear()
+
+        assert response.status_code == 200
+        assert session.get(SourceMaterial, source.id) is None
+        assert session.get(CareerEvent, event.id) is None
+        assert session.get(Claim, claim.id) is None
+        assert session.exec(select(Evidence).where(Evidence.source_material_id == source.id)).all() == []
+        assert session.exec(select(BackgroundJob).where(BackgroundJob.id == job.id)).first() is None
+
+
+def test_clear_vault_removes_only_current_user_profile_and_vault_data(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'clear_vault.db'}", echo=False)
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        owner = User(email="clear-owner@example.com", display_name="Owner")
+        other = User(email="clear-other@example.com", display_name="Other")
+        session.add(owner)
+        session.add(other)
+        session.commit()
+        session.refresh(owner)
+        session.refresh(other)
+
+        owner_profile = Profile(user_id=owner.id, full_name="Owner")
+        other_profile = Profile(user_id=other.id, full_name="Other")
+        owner_source = SourceMaterial(user_id=owner.id, source_type="file", title="owner.pdf")
+        other_source = SourceMaterial(user_id=other.id, source_type="file", title="other.pdf")
+        session.add(owner_profile)
+        session.add(other_profile)
+        session.add(owner_source)
+        session.add(other_source)
+        session.commit()
+        session.refresh(owner_source)
+        session.refresh(other_source)
+
+        owner_event = CareerEvent(user_id=owner.id, event_type="project", title="Owner event", source_id=owner_source.id)
+        other_event = CareerEvent(user_id=other.id, event_type="project", title="Other event", source_id=other_source.id)
+        session.add(owner_event)
+        session.add(other_event)
+        session.commit()
+        session.refresh(owner_event)
+        session.refresh(other_event)
+
+        owner_claim = Claim(user_id=owner.id, career_event_id=owner_event.id, claim_text="Owner claim")
+        other_claim = Claim(user_id=other.id, career_event_id=other_event.id, claim_text="Other claim")
+        session.add(owner_claim)
+        session.add(other_claim)
+        session.commit()
+        session.refresh(owner_claim)
+        session.refresh(other_claim)
+
+        session.add(Evidence(user_id=owner.id, source_material_id=owner_source.id, career_event_id=owner_event.id))
+        session.add(Evidence(user_id=other.id, source_material_id=other_source.id, career_event_id=other_event.id))
+        session.add(BackgroundJob(user_id=owner.id, job_type="source_parse", payload={"source_id": str(owner_source.id)}))
+        session.add(BackgroundJob(user_id=other.id, job_type="source_parse", payload={"source_id": str(other_source.id)}))
+        session.commit()
+
+        client = _client_for_user(owner, session)
+        try:
+            response = client.post("/api/vault/clear")
+        finally:
+            app.dependency_overrides.clear()
+
+        assert response.status_code == 200
+        assert session.exec(select(Profile).where(Profile.user_id == owner.id)).first() is None
+        assert session.exec(select(SourceMaterial).where(SourceMaterial.user_id == owner.id)).all() == []
+        assert session.exec(select(CareerEvent).where(CareerEvent.user_id == owner.id)).all() == []
+        assert session.exec(select(Claim).where(Claim.user_id == owner.id)).all() == []
+        assert session.exec(select(Evidence).where(Evidence.user_id == owner.id)).all() == []
+        assert session.exec(select(BackgroundJob).where(BackgroundJob.user_id == owner.id)).all() == []
+
+        assert session.exec(select(Profile).where(Profile.user_id == other.id)).first() is not None
+        assert session.exec(select(SourceMaterial).where(SourceMaterial.user_id == other.id)).all() != []
+        assert session.exec(select(CareerEvent).where(CareerEvent.user_id == other.id)).all() != []

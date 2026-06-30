@@ -2,8 +2,12 @@
 
 import { useEffect, useRef, useState } from 'react'
 import {
+  clearVault,
   createSource,
+  deleteSource,
   uploadSource as uploadSourceFile,
+  getSources,
+  getSource,
   getGroupedEvents,
   createEvent,
   updateEvent,
@@ -50,6 +54,22 @@ const EMPTY_DETAILS = {
 
 type EventForm = ReturnType<typeof eventToForm>
 
+type SourceItem = {
+  id: string
+  title: string
+  source_type: string
+  parse_status: string
+  raw_text_preview?: string
+  created_at: string
+}
+
+type PendingFile = {
+  id: string
+  file: File
+  status: 'selected' | 'uploading' | 'failed'
+  error?: string
+}
+
 function eventToForm(event: VaultEvent) {
   return {
     title: event.title || '',
@@ -77,6 +97,20 @@ function confidenceLabel(value?: number | null) {
   return `${Math.round(value * 100)}%`
 }
 
+function formatFileSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+function sourceStatusLabel(status: string) {
+  if (status === 'parsed') return '已解析'
+  if (status === 'extracted') return '已提取'
+  if (status === 'extracting') return '解析中'
+  if (status === 'failed') return '失败'
+  return '队列中'
+}
+
 export default function VaultPage() {
   const [text, setText] = useState('')
   const [urls, setUrls] = useState('')
@@ -84,6 +118,9 @@ export default function VaultPage() {
   const [fileUploading, setFileUploading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [statusMessage, setStatusMessage] = useState('')
+  const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([])
+  const [sources, setSources] = useState<SourceItem[]>([])
+  const [sourcesLoading, setSourcesLoading] = useState(true)
   const [sections, setSections] = useState<VaultSection[]>([])
   const [loading, setLoading] = useState(true)
   const [activeEvent, setActiveEvent] = useState<VaultEvent | null>(null)
@@ -91,6 +128,7 @@ export default function VaultPage() {
   const [claims, setClaims] = useState<VaultClaim[]>([])
   const [newClaimText, setNewClaimText] = useState('')
   const [showNewEventModal, setShowNewEventModal] = useState(false)
+  const [clearingVault, setClearingVault] = useState(false)
   const [newEventForm, setNewEventForm] = useState<EventForm>({
     title: '',
     event_type: 'work',
@@ -120,28 +158,55 @@ export default function VaultPage() {
     }
   }
 
+  async function loadSources() {
+    setSourcesLoading(true)
+    try {
+      const response: any = await getSources()
+      const summaries: SourceItem[] = response.data || []
+      const hydrated = await Promise.all(
+        summaries.slice(0, 8).map(async (source) => {
+          try {
+            const detail: any = await getSource(source.id)
+            return { ...source, raw_text_preview: detail.data?.raw_text_preview || source.raw_text_preview || '' }
+          } catch {
+            return source
+          }
+        }),
+      )
+      setSources(hydrated)
+    } catch {
+      setStatusMessage('源材料加载失败，请确认已登录')
+    } finally {
+      setSourcesLoading(false)
+    }
+  }
+
   useEffect(() => {
     loadSections()
+    loadSources()
     const timer = window.setInterval(loadSections, 5000)
     return () => window.clearInterval(timer)
   }, [])
 
-  async function submitTextSource() {
+  async function submitTextSource(options: { silent?: boolean } = {}) {
     const cleanText = text.trim()
     const cleanUrls = urls.split('\n').map((url) => url.trim()).filter((url) => url.startsWith('http'))
     if (!cleanText && cleanUrls.length === 0) {
-      setStatusMessage('请先输入文字或链接')
+      if (!options.silent) setStatusMessage('请先输入文字或链接')
       return
     }
     setSubmitting(true)
-    setStatusMessage('正在创建解析任务...')
+    if (!options.silent) setStatusMessage('正在创建解析任务...')
     try {
       await createSource({ text: cleanText, urls: cleanUrls, input_hint: inputHint.trim() })
       setText('')
       setUrls('')
       setInputHint('')
-      setStatusMessage('已提交，解析完成后会出现在右侧')
-      await loadSections()
+      if (!options.silent) {
+        setStatusMessage('已提交，解析完成后会出现在右侧')
+        await loadSources()
+        await loadSections()
+      }
     } catch {
       setStatusMessage('提交失败，请检查登录状态或 API 设置')
     } finally {
@@ -149,17 +214,96 @@ export default function VaultPage() {
     }
   }
 
-  async function submitFile(file: File) {
+  function addPendingFiles(fileList: FileList | File[]) {
+    const files = Array.from(fileList)
+    if (!files.length) return
+    setPendingFiles((current) => [
+      ...current,
+      ...files.map((file) => ({
+        id: `${file.name}:${file.size}:${file.lastModified}:${crypto.randomUUID()}`,
+        file,
+        status: 'selected' as const,
+      })),
+    ])
+    setStatusMessage('文件已加入待处理列表，点击“开始解析”后上传。')
+  }
+
+  async function analyzePendingFiles() {
+    if (!pendingFiles.length && !text.trim() && !urls.trim()) {
+      setStatusMessage('请先选择文件、输入文字或填写链接')
+      return
+    }
+
     setFileUploading(true)
-    setStatusMessage('正在上传文件...')
+    setStatusMessage('正在解析材料...')
     try {
-      await uploadSourceFile(file)
-      setStatusMessage('文件已上传，解析完成后会出现在右侧')
+      if (pendingFiles.length) {
+        for (const item of pendingFiles) {
+          setPendingFiles((current) =>
+            current.map((fileItem) => fileItem.id === item.id ? { ...fileItem, status: 'uploading' } : fileItem),
+          )
+          try {
+            await uploadSourceFile(item.file)
+            setPendingFiles((current) => current.filter((fileItem) => fileItem.id !== item.id))
+          } catch (error: any) {
+            setPendingFiles((current) =>
+              current.map((fileItem) =>
+                fileItem.id === item.id
+                  ? { ...fileItem, status: 'failed', error: error?.message || '上传失败' }
+                  : fileItem,
+              ),
+            )
+          }
+        }
+      }
+
+      if (text.trim() || urls.trim()) {
+        await submitTextSource({ silent: true })
+      }
+
+      setStatusMessage('材料已提交，已提取的内容会显示在下方。')
+      await loadSources()
       await loadSections()
-    } catch {
-      setStatusMessage('文件上传失败')
+    } catch (error: any) {
+      setStatusMessage(error?.message || '解析失败')
     } finally {
       setFileUploading(false)
+    }
+  }
+
+  async function removePendingFile(id: string) {
+    setPendingFiles((current) => current.filter((item) => item.id !== id))
+  }
+
+  async function removeSource(source: SourceItem) {
+    if (!window.confirm(`确定删除「${source.title}」？关联解析结果也会一起删除。`)) return
+    try {
+      await deleteSource(source.id)
+      setStatusMessage('材料已删除')
+      await loadSources()
+      await loadSections()
+    } catch (error: any) {
+      setStatusMessage(error?.message || '删除失败')
+    }
+  }
+
+  async function clearCurrentVault() {
+    if (!window.confirm('这将清空所有职业档案、经历事件、claims、evidence 和源材料记录。此操作不可恢复。')) return
+    setClearingVault(true)
+    try {
+      await clearVault()
+      setPendingFiles([])
+      setSources([])
+      setSections([])
+      setActiveEvent(null)
+      setEventForm(null)
+      setStatusMessage('职业档案已清空')
+      await loadSources()
+      await loadSections()
+    } catch (error: any) {
+      setStatusMessage(error?.message || '清空失败')
+    } finally {
+      setClearingVault(false)
     }
   }
 
@@ -289,22 +433,66 @@ export default function VaultPage() {
           <p>简历、项目笔记、作品链接和国内招聘平台文本都从这里进入同一个职业档案。</p>
         </div>
 
-        <button className="drop-zone" onClick={() => fileRef.current?.click()} disabled={fileUploading}>
-          <span>上传文件</span>
-          <strong>{fileUploading ? '上传中...' : 'PDF / Word / 文本材料'}</strong>
-          <small>保留原始材料，再解析成可编辑事件</small>
+        <button
+          type="button"
+          className="drop-zone"
+          onClick={() => fileRef.current?.click()}
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={(event) => {
+            event.preventDefault()
+            addPendingFiles(event.dataTransfer.files)
+          }}
+          disabled={fileUploading}
+        >
+          <span>上传材料</span>
+          <strong>拖拽文件，或点击选择</strong>
+          <small>支持 PDF、Word、文本材料；选择后点击“开始解析”</small>
         </button>
         <input
           ref={fileRef}
           type="file"
+          multiple
           accept=".pdf,.doc,.docx,.txt,.md"
           className="hidden"
           onChange={(event) => {
-            const file = event.target.files?.[0]
-            if (file) submitFile(file)
+            if (event.target.files?.length) addPendingFiles(event.target.files)
             event.currentTarget.value = ''
           }}
         />
+
+        {(pendingFiles.length > 0 || sources.length > 0) && (
+          <div className="material-list">
+            {pendingFiles.map((item, index) => (
+              <div key={item.id} className={`material-row ${item.status === 'failed' ? 'failed' : ''}`}>
+                <span className="material-index">{index + 1}</span>
+                <div className="material-main">
+                  <strong>{item.file.name}</strong>
+                  <span>{formatFileSize(item.file.size)} · {item.status === 'uploading' ? '上传中' : item.status === 'failed' ? item.error || '上传失败' : '待解析'}</span>
+                </div>
+                <button type="button" onClick={() => removePendingFile(item.id)} disabled={item.status === 'uploading'} aria-label="删除文件">
+                  ×
+                </button>
+              </div>
+            ))}
+
+            {sources.map((source, index) => {
+              const analyzed = source.parse_status === 'extracted' || source.parse_status === 'parsed'
+              return (
+                <div key={source.id} className={`material-row ${analyzed ? 'analyzed' : ''}`}>
+                  <span className="material-index">{pendingFiles.length + index + 1}</span>
+                  <div className="material-main">
+                    <strong>{source.title}</strong>
+                    <span>{source.source_type === 'file' ? '文件' : '文本'} · {sourceStatusLabel(source.parse_status)}</span>
+                  </div>
+                  <em>{sourceStatusLabel(source.parse_status)}</em>
+                  <button type="button" onClick={() => removeSource(source)} aria-label="删除材料">
+                    ×
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        )}
 
         <label className="field-block">
           <span>文字材料</span>
@@ -319,10 +507,34 @@ export default function VaultPage() {
           <input value={inputHint} onChange={(event) => setInputHint(event.target.value)} placeholder="例如：重点识别产品经历和量化成果" />
         </label>
 
-        <button className="submit-source" onClick={submitTextSource} disabled={submitting || fileUploading}>
-          {submitting ? '提交中...' : '提交并解析'}
+        <button className="submit-source" onClick={analyzePendingFiles} disabled={submitting || fileUploading}>
+          {submitting || fileUploading ? '解析中...' : '开始解析'}
         </button>
         {statusMessage && <p className="status-message">{statusMessage}</p>}
+
+        <div className="source-list">
+          <div className="source-list-heading">
+            <h2>已解析内容</h2>
+            <button type="button" onClick={loadSources}>刷新</button>
+          </div>
+          {sourcesLoading ? (
+            <p className="source-list-empty">正在加载材料...</p>
+          ) : sources.length === 0 ? (
+            <p className="source-list-empty">解析完成后，会在这里展示提取出的文本内容。</p>
+          ) : (
+            <div className="source-list-stack">
+              {sources.slice(0, 6).map((source) => (
+                <div key={source.id} className="source-list-item">
+                  <div>
+                    <strong>{source.title}</strong>
+                    <span>{source.raw_text_preview || '已进入队列，等待 AI 生成结构化事件。'}</span>
+                  </div>
+                  <em>{sourceStatusLabel(source.parse_status)}</em>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </section>
 
       <section className="vault-profile">
@@ -331,7 +543,12 @@ export default function VaultPage() {
             <p className="eyebrow">职业档案</p>
             <h1>按经历类型沉淀身份资产</h1>
           </div>
-          <button onClick={loadSections}>刷新</button>
+          <div className="vault-profile-actions">
+            <button onClick={loadSections}>刷新</button>
+            <button className="danger" onClick={clearCurrentVault} disabled={clearingVault}>
+              {clearingVault ? '清空中...' : '清空 Profile'}
+            </button>
+          </div>
         </div>
 
         {loading ? (

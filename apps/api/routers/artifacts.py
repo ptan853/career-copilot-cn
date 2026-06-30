@@ -97,7 +97,7 @@ def get_artifact(
     session: Session = Depends(get_session),
 ):
     artifact = session.get(Artifact, artifact_id)
-    if not artifact or str(artifact.user_id) != user_id:
+    if not artifact or artifact.user_id != user_id:
         raise HTTPException(status_code=404, detail="文档不存在")
 
     result = _serialize_artifact(artifact)
@@ -200,7 +200,7 @@ def generate_artifact(
     """根据岗位 + 证据映射生成结构化的文档（resume/cover_letter 等）。"""
     # 验证岗位存在且属于用户
     job = session.get(JobTarget, body.job_target_id)
-    if not job or str(job.user_id) != user_id:
+    if not job or job.user_id != user_id:
         raise HTTPException(status_code=404, detail="岗位不存在")
 
     # 加载证据映射
@@ -266,7 +266,7 @@ def update_artifact(
     session: Session = Depends(get_session),
 ):
     artifact = session.get(Artifact, artifact_id)
-    if not artifact or str(artifact.user_id) != user_id:
+    if not artifact or artifact.user_id != user_id:
         raise HTTPException(status_code=404, detail="文档不存在")
     if body.title is not None:
         artifact.title = body.title
@@ -287,7 +287,7 @@ def delete_artifact(
     session: Session = Depends(get_session),
 ):
     artifact = session.get(Artifact, artifact_id)
-    if not artifact or str(artifact.user_id) != user_id:
+    if not artifact or artifact.user_id != user_id:
         raise HTTPException(status_code=404, detail="文档不存在")
     session.delete(artifact)
     session.commit()
@@ -303,7 +303,7 @@ def list_versions(
     session: Session = Depends(get_session),
 ):
     artifact = session.get(Artifact, artifact_id)
-    if not artifact or str(artifact.user_id) != user_id:
+    if not artifact or artifact.user_id != user_id:
         raise HTTPException(status_code=404, detail="文档不存在")
 
     versions = session.exec(
@@ -322,7 +322,7 @@ def save_version(
     session: Session = Depends(get_session),
 ):
     artifact = session.get(Artifact, artifact_id)
-    if not artifact or str(artifact.user_id) != user_id:
+    if not artifact or artifact.user_id != user_id:
         raise HTTPException(status_code=404, detail="文档不存在")
 
     # 获取最新版本号

@@ -108,8 +108,9 @@ def get_event(
     user_id: str = Depends(get_current_user_id),
     session: Session = Depends(get_session),
 ):
+    user_uuid = _user_uuid(user_id)
     event = session.get(CareerEvent, _uuid(event_id))
-    if not event or str(event.user_id) != user_id:
+    if not event or event.user_id != user_uuid:
         raise HTTPException(status_code=404, detail="Event not found")
     return {"data": _serialize_event(event, session)}
 
@@ -121,8 +122,9 @@ def update_event(
     user_id: str = Depends(get_current_user_id),
     session: Session = Depends(get_session),
 ):
+    user_uuid = _user_uuid(user_id)
     event = session.get(CareerEvent, _uuid(event_id))
-    if not event or str(event.user_id) != user_id:
+    if not event or event.user_id != user_uuid:
         raise HTTPException(status_code=404, detail="Event not found")
 
     update_data = body.model_dump(exclude_none=True)
@@ -141,8 +143,9 @@ def confirm_event(
     user_id: str = Depends(get_current_user_id),
     session: Session = Depends(get_session),
 ):
+    user_uuid = _user_uuid(user_id)
     event = session.get(CareerEvent, _uuid(event_id))
-    if not event or str(event.user_id) != user_id:
+    if not event or event.user_id != user_uuid:
         raise HTTPException(status_code=404, detail="Event not found")
     event.status = "confirmed"
     session.add(event)
@@ -156,8 +159,9 @@ def archive_event(
     user_id: str = Depends(get_current_user_id),
     session: Session = Depends(get_session),
 ):
+    user_uuid = _user_uuid(user_id)
     event = session.get(CareerEvent, _uuid(event_id))
-    if not event or str(event.user_id) != user_id:
+    if not event or event.user_id != user_uuid:
         raise HTTPException(status_code=404, detail="Event not found")
     event.status = "archived"
     session.add(event)
@@ -171,8 +175,9 @@ def delete_event(
     user_id: str = Depends(get_current_user_id),
     session: Session = Depends(get_session),
 ):
+    user_uuid = _user_uuid(user_id)
     event = session.get(CareerEvent, _uuid(event_id))
-    if not event or str(event.user_id) != user_id:
+    if not event or event.user_id != user_uuid:
         raise HTTPException(status_code=404, detail="Event not found")
 
     claims = session.exec(select(Claim).where(Claim.career_event_id == event.id)).all()
@@ -192,11 +197,13 @@ def delete_event(
     return {"message": "已删除", "event_id": event_id}
 
 
-def _user_uuid(user_id: str) -> uuid.UUID:
+def _user_uuid(user_id: str | uuid.UUID) -> uuid.UUID:
     return _uuid(user_id)
 
 
-def _uuid(value: str) -> uuid.UUID:
+def _uuid(value: str | uuid.UUID) -> uuid.UUID:
+    if isinstance(value, uuid.UUID):
+        return value
     try:
         return uuid.UUID(value)
     except ValueError:

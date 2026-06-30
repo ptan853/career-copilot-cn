@@ -458,8 +458,8 @@ function AuthModal(props: {
   const isSignup = props.mode === 'signup'
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-[#eef7ff]/82 px-4 py-8 backdrop-blur-sm">
-      <div className="relative w-full max-w-[520px] rounded-[28px] border border-white/85 bg-white p-8 shadow-[0_30px_80px_rgba(74,125,255,0.18)] md:p-10">
+    <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-[#eef7ff]/82 px-4 py-4 backdrop-blur-sm sm:py-6">
+      <div className="relative max-h-[calc(100vh-32px)] w-full max-w-[520px] overflow-y-auto rounded-[24px] border border-white/85 bg-white p-5 shadow-[0_30px_80px_rgba(74,125,255,0.18)] sm:p-7 md:p-8">
         <button
           type="button"
           onClick={props.onClose}
@@ -469,17 +469,17 @@ function AuthModal(props: {
           <X className="h-5 w-5" />
         </button>
 
-        <div className="mb-7">
-          <div className="mb-5 inline-flex items-center gap-3 text-sm font-black tracking-[0.08em] text-[#4a7dff]">
-            <span className="grid h-9 w-9 place-items-center rounded-full bg-[#eaf6ff]">
+        <div className="mb-5">
+          <div className="mb-4 inline-flex items-center gap-3 text-sm font-black tracking-[0.08em] text-[#4a7dff]">
+            <span className="grid h-8 w-8 place-items-center rounded-full bg-[#eaf6ff]">
               <ArrowRight className="h-4 w-4" />
             </span>
             {isSignup ? '创建账号' : '欢迎回来'}
           </div>
-          <h2 className="text-3xl font-black tracking-[-0.02em] text-[#102033]">
+          <h2 className="text-2xl font-black tracking-[-0.02em] text-[#102033] md:text-3xl">
             {isSignup ? '开始建立你的求职资料库' : '登录求索 Copilot'}
           </h2>
-          <p className="mt-2 text-base font-semibold text-[#60708a]">
+          <p className="mt-2 text-sm font-semibold leading-6 text-[#60708a] md:text-base">
             {isSignup ? '把简历、岗位和经历记录沉淀成可复用资产。' : '继续整理经历、匹配岗位和生成材料。'}
           </p>
         </div>
@@ -501,13 +501,13 @@ function AuthModal(props: {
 
         <a
           href={getGoogleLoginUrl(props.next)}
-          className="mt-6 inline-flex h-14 w-full items-center justify-center gap-3 rounded-[14px] border border-[#dbe8f5] bg-white text-lg font-black text-[#24364f] shadow-sm transition hover:bg-[#f7fbff]"
+          className="mt-4 inline-flex h-12 w-full items-center justify-center gap-3 rounded-[14px] border border-[#dbe8f5] bg-white text-base font-black text-[#24364f] shadow-sm transition hover:bg-[#f7fbff]"
         >
           <GoogleMark />
           继续使用 Google
         </a>
 
-        <div className="my-7 flex items-center gap-4 text-sm font-bold text-[#8a9bb2]">
+        <div className="my-4 flex items-center gap-4 text-sm font-bold text-[#8a9bb2]">
           <div className="h-px flex-1 bg-[#e3eef8]" />
           <span>或使用账号登录</span>
           <div className="h-px flex-1 bg-[#e3eef8]" />
@@ -518,7 +518,7 @@ function AuthModal(props: {
           邮箱密码登录
         </div>
 
-        <div className="mt-5 space-y-4">
+        <div className="mt-4 space-y-3">
           {isSignup && (
             <Field icon={<UserRound className="h-5 w-5" />}>
               <input className={inputClass} value={props.name} onChange={e => props.onNameChange(e.target.value)} placeholder="你的名字" />
@@ -550,13 +550,13 @@ function AuthModal(props: {
             type="button"
             onClick={props.onPasswordAuth}
             disabled={props.loading}
-            className="h-[52px] w-full rounded-[14px] bg-[#4a7dff] px-4 py-3.5 text-base font-black text-white shadow-[0_14px_30px_rgba(74,125,255,0.22)] transition hover:bg-[#4a7dff] disabled:cursor-not-allowed disabled:bg-[#eef3f8] disabled:text-[#60708a]"
+            className="h-12 w-full rounded-[14px] bg-[#4a7dff] px-4 text-base font-black text-white shadow-[0_14px_30px_rgba(74,125,255,0.22)] transition hover:bg-[#4a7dff] disabled:cursor-not-allowed disabled:bg-[#eef3f8] disabled:text-[#60708a]"
           >
             {isSignup ? '创建账号' : '登录'}
           </button>
         </div>
 
-        <div className="mt-7 text-center text-base font-semibold text-[#60708a]">
+        <div className="mt-4 text-center text-sm font-semibold text-[#60708a]">
           {isSignup ? '已经有账号？' : '还没有账号？'}{' '}
           <button
             type="button"
@@ -573,7 +573,7 @@ function AuthModal(props: {
 
 function Field({ icon, children }: { icon: React.ReactNode; children: React.ReactNode }) {
   return (
-    <div className="flex h-14 items-center gap-3 rounded-[14px] border border-[#dbe8f5] bg-white px-4 text-[#8a9bb2] focus-within:border-[#4a7dff] focus-within:ring-4 focus-within:ring-[#4a7dff]/10">
+    <div className="flex h-12 items-center gap-3 rounded-[14px] border border-[#dbe8f5] bg-white px-4 text-[#8a9bb2] focus-within:border-[#4a7dff] focus-within:ring-4 focus-within:ring-[#4a7dff]/10">
       {icon}
       {children}
     </div>

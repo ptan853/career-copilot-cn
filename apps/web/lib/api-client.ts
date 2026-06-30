@@ -114,6 +114,9 @@ export const getSources = () => fetchAPI('/api/vault/sources')
 
 export const getSource = (id: string) => fetchAPI(`/api/vault/sources/${id}`)
 
+export const deleteSource = (id: string) =>
+  fetchAPI(`/api/vault/sources/${id}`, { method: 'DELETE' })
+
 // Vault — Events
 export const createEvent = (data: {
   event_type: string; title: string; role?: string; organization?: string;
@@ -152,6 +155,7 @@ export const archiveEvent = (id: string) =>
 export const getProfile = () => fetchAPI('/api/vault/profile')
 export const updateProfile = (data: Record<string, any>) =>
   fetchAPI('/api/vault/profile', { method: 'PATCH', body: JSON.stringify(data) })
+export const clearVault = () => fetchAPI('/api/vault/clear', { method: 'POST' })
 
 // Vault — Claims
 export const getClaims = (params?: { event_id?: string }) => {

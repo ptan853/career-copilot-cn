@@ -28,17 +28,18 @@ def extract_text(file_path: str, mime_type: str = "") -> str:
 
 
 def _extract_pdf(file_path: str) -> str:
-    """使用 pdfplumber 提取 PDF 文本。"""
+    """使用 PyMuPDF 提取 PDF 文本。"""
     try:
-        import pdfplumber
-        with pdfplumber.open(file_path) as pdf:
-            pages = []
-            for page in pdf.pages:
-                text = page.extract_text()
+        import fitz
+
+        with fitz.open(file_path) as doc:
+            pages: list[str] = []
+            for page in doc:
+                text = page.get_text("text")
                 if text:
-                    pages.append(text)
+                    pages.append(text.strip())
             result = "\n\n".join(pages)
-            logger.info("pdf extracted %d chars from %d pages", len(result), len(pdf.pages))
+            logger.info("pdf extracted %d chars from %d pages", len(result), doc.page_count)
             return result
     except Exception as e:
         logger.exception("pdf extraction failed: %s", e)
