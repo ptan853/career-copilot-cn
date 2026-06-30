@@ -32,6 +32,24 @@ const providerPresets: Record<string, { label: string; baseUrl: string; modelNam
   },
 }
 
+const linkTypeOptions = [
+  { value: 'linkedin_profile', label: 'LinkedIn' },
+  { value: 'github_profile', label: 'GitHub' },
+  { value: 'github_repo', label: 'GitHub 项目' },
+  { value: 'portfolio', label: '作品集' },
+  { value: 'website', label: '网站/博客' },
+]
+
+const createProfileLink = () => ({
+  label: 'GitHub',
+  url: '',
+  link_type: 'github_profile',
+  show_in_materials: true,
+  use_for_ai_parsing: false,
+  parse_status: 'not_started',
+  last_parse_error: null,
+})
+
 export default function SettingsPage() {
   const router = useRouter()
   const [user, setUser] = useState<AuthUser | null>(null)
@@ -56,6 +74,7 @@ export default function SettingsPage() {
           years_of_experience: data.years_of_experience ?? '',
           target_roles_text: (data.target_roles || []).join('，'),
           target_locations_text: (data.target_locations || []).join('，'),
+          links: Array.isArray(data.links) ? data.links : [],
           ai_provider: data.ai_provider || 'bailian_qwen',
           ai_provider_name: data.ai_provider_name || '',
           ai_api_base: data.ai_api_base || providerPresets[data.ai_provider || 'bailian_qwen']?.baseUrl || '',
@@ -83,6 +102,9 @@ export default function SettingsPage() {
         target_locations: profile.target_locations_text
           ? profile.target_locations_text.split(/[，,]/).map((s: string) => s.trim()).filter(Boolean)
           : undefined,
+        links: Array.isArray(profile.links)
+          ? profile.links.filter((link: any) => String(link.url || '').trim())
+          : undefined,
         ai_provider: profile.ai_provider || 'bailian_qwen',
         ai_provider_name: profile.ai_provider_name || undefined,
         ai_api_base: profile.ai_api_base || undefined,
@@ -99,6 +121,22 @@ export default function SettingsPage() {
   const handleLogout = async () => {
     await logout()
     router.push('/')
+  }
+
+  const updateLink = (index: number, patch: Record<string, any>) => {
+    const links = Array.isArray(profile.links) ? [...profile.links] : []
+    links[index] = { ...links[index], ...patch }
+    setProfile({ ...profile, links })
+  }
+
+  const removeLink = (index: number) => {
+    const links = Array.isArray(profile.links) ? [...profile.links] : []
+    links.splice(index, 1)
+    setProfile({ ...profile, links })
+  }
+
+  const addLink = () => {
+    setProfile({ ...profile, links: [...(Array.isArray(profile.links) ? profile.links : []), createProfileLink()] })
   }
 
   if (loading) {
@@ -186,6 +224,78 @@ export default function SettingsPage() {
             <div className="flex items-center gap-3">
               <button className="btn primary" onClick={handleSave} disabled={saving}>
                 {saving ? '保存中...' : '保存档案'}
+              </button>
+              {message && <span className="text-sm font-semibold text-app-green">{message}</span>}
+            </div>
+          </div>
+        </div>
+
+        {/* Personal links */}
+        <div className="app-card p-5">
+          <div className="flex items-start justify-between gap-4 mb-4">
+            <div>
+              <h2 className="text-xl font-black">个人链接</h2>
+              <p className="text-xs text-app-muted mt-1">保存会写入 Profile。展示开关用于简历/求职信；解析开关会让链接进入 AI 材料队列。</p>
+            </div>
+            <button className="btn" type="button" onClick={addLink}>添加链接</button>
+          </div>
+          <div className="space-y-3">
+            {(profile.links || []).map((link: any, index: number) => (
+              <div key={`${link.url || 'link'}-${index}`} className="rounded-[18px] border border-app-line bg-white p-3">
+                <div className="grid gap-2 md:grid-cols-[150px_1fr_auto]">
+                  <select
+                    className="input"
+                    value={link.link_type || 'website'}
+                    onChange={e => {
+                      const option = linkTypeOptions.find(item => item.value === e.target.value)
+                      updateLink(index, { link_type: e.target.value, label: option?.label || link.label || 'Link' })
+                    }}
+                  >
+                    {linkTypeOptions.map(option => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                  <input
+                    className="input"
+                    value={link.url || ''}
+                    onChange={e => updateLink(index, { url: e.target.value })}
+                    placeholder="https://github.com/your-name"
+                  />
+                  <button className="btn" type="button" onClick={() => removeLink(index)}>删除</button>
+                </div>
+                <div className="mt-3 grid gap-2 md:grid-cols-2">
+                  <label className="flex items-center gap-2 rounded-[14px] bg-app-panel-soft px-3 py-2 text-sm font-semibold text-app-ink">
+                    <input
+                      type="checkbox"
+                      checked={link.show_in_materials !== false}
+                      onChange={e => updateLink(index, { show_in_materials: e.target.checked })}
+                    />
+                    展示在简历和求职材料中
+                  </label>
+                  <label className="flex items-center gap-2 rounded-[14px] bg-app-panel-soft px-3 py-2 text-sm font-semibold text-app-ink">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(link.use_for_ai_parsing)}
+                      onChange={e => updateLink(index, { use_for_ai_parsing: e.target.checked })}
+                    />
+                    参与 AI 解析
+                  </label>
+                </div>
+                {link.use_for_ai_parsing && (
+                  <p className="mt-2 text-xs leading-relaxed text-app-muted">
+                    系统会尝试读取公开内容。LinkedIn、BOSS、猎聘等需要登录的页面可能解析失败，建议粘贴页面文字或后续使用浏览器插件导入。
+                  </p>
+                )}
+              </div>
+            ))}
+            {(!profile.links || profile.links.length === 0) && (
+              <div className="rounded-[18px] border border-dashed border-app-line bg-app-panel-soft p-4 text-sm text-app-muted">
+                还没有链接。可以添加 LinkedIn、GitHub、作品集或个人网站。
+              </div>
+            )}
+            <div className="flex items-center gap-3">
+              <button className="btn primary" onClick={handleSave} disabled={saving}>
+                {saving ? '保存中...' : '保存链接'}
               </button>
               {message && <span className="text-sm font-semibold text-app-green">{message}</span>}
             </div>
