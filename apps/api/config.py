@@ -39,10 +39,17 @@ class Settings(BaseSettings):
     web_app_url: str = "http://localhost:3000"
 
     # AI Providers
+    openai_api_key: str = ""
+    openai_api_base: str = "https://api.openai.com"
+    openai_model: str = "gpt-4.1-mini"
     deepseek_api_key: str = ""
     deepseek_api_base: str = "https://api.deepseek.com"
     qwen_api_key: str = ""
     qwen_api_base: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+    # Platform default API key (for new user trial quota)
+    platform_openai_api_key: str = ""
+    platform_deepseek_api_key: str = ""
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
