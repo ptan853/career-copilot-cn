@@ -22,7 +22,7 @@ import {
 
 const NAV_ITEMS = [
   { href: '/dashboard', label: '首页', icon: Home },
-  { href: '/vault', label: '档案', icon: LibraryBig },
+  { href: '/vault', label: '职业档案', icon: LibraryBig },
   { href: '/jobs', label: '岗位', icon: BriefcaseBusiness },
   { href: '/generate', label: '生成', icon: Sparkles },
   { href: '/editor', label: '编辑', icon: FilePenLine },

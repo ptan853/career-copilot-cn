@@ -43,6 +43,50 @@ export {
 } from './auth'
 export type { AuthUser, AuthResponse } from './auth'
 
+export type VaultClaim = {
+  id: string
+  career_event_id: string
+  claim_text: string
+  claim_type: string
+  strength: string
+  visibility?: string
+}
+
+export type VaultEvent = {
+  id: string
+  section_type?: string
+  section_title?: string
+  event_type: string
+  title: string
+  role?: string | null
+  organization?: string | null
+  location?: string | null
+  time_start?: string | null
+  time_end?: string | null
+  time_precision?: string
+  description?: string | null
+  details_json?: Record<string, any>
+  tags?: string[]
+  status: string
+  visibility: string
+  source_confidence?: number | null
+  source_id?: string | null
+  claims_count?: number
+  evidence_count?: number
+}
+
+export type VaultSection = {
+  section_type: string
+  section_title: string
+  events: VaultEvent[]
+}
+
+export type VaultSourceInput = {
+  text: string
+  urls: string[]
+  input_hint?: string
+}
+
 export const emailSignup = (email: string, password: string, name: string) =>
   fetchAPI('/api/auth/signup', { method: 'POST', body: JSON.stringify({ email, password, name }) })
 
@@ -57,7 +101,7 @@ export const getDashboardActivity = () => fetchAPI('/api/dashboard/activity')
 export const getDashboardRecommendations = () => fetchAPI('/api/dashboard/recommendations')
 
 // Vault — Sources
-export const createSource = (data: { text: string; urls: string[] }) =>
+export const createSource = (data: VaultSourceInput) =>
   fetchAPI('/api/vault/sources', { method: 'POST', body: JSON.stringify(data) })
 
 export const uploadSource = (file: File) => {
@@ -83,8 +127,18 @@ export const getEvents = (params?: { status?: string; event_type?: string }) => 
   return fetchAPI(`/api/vault/events${qs ? `?${qs}` : ''}`)
 }
 
+export const getGroupedEvents = (params?: { status?: string }) => {
+  const q = new URLSearchParams()
+  q.set('grouped', 'true')
+  if (params?.status) q.set('status', params.status)
+  return fetchAPI<{ data: VaultSection[] }>(`/api/vault/events?${q.toString()}`)
+}
+
 export const updateEvent = (id: string, data: Record<string, any>) =>
   fetchAPI(`/api/vault/events/${id}`, { method: 'PATCH', body: JSON.stringify(data) })
+
+export const deleteEvent = (id: string) =>
+  fetchAPI(`/api/vault/events/${id}`, { method: 'DELETE' })
 
 export const confirmEvent = (id: string) =>
   fetchAPI(`/api/vault/events/${id}/confirm`, { method: 'POST' })
