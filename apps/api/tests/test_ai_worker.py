@@ -81,7 +81,13 @@ def test_execute_job_persists_events_claims_evidence_and_metadata(monkeypatch, t
         session.refresh(job)
         event = session.exec(select(CareerEvent).where(CareerEvent.source_id == source.id)).one()
         claim = session.exec(select(Claim).where(Claim.career_event_id == event.id)).one()
-        evidence = session.exec(select(Evidence).where(Evidence.claim_id == claim.id)).one()
+        event_evidence = session.exec(
+            select(Evidence).where(
+                Evidence.career_event_id == event.id,
+                Evidence.claim_id.is_(None),
+            )
+        ).one()
+        claim_evidence = session.exec(select(Evidence).where(Evidence.claim_id == claim.id)).one()
 
         assert source.parse_status == "parsed"
         assert source.metadata_json["source_subtype"] == "resume"
@@ -92,5 +98,7 @@ def test_execute_job_persists_events_claims_evidence_and_metadata(monkeypatch, t
         assert event.details_json["needs_review_fields"] == ["outcome"]
         assert event.details_json["section_type"] == "work"
         assert claim.claim_text == "参与增长实验设计。"
-        assert evidence.quote == "负责增长实验设计"
-        assert evidence.locator_json == {}
+        assert event_evidence.quote == "负责增长实验设计"
+        assert event_evidence.locator_json == {"page": 1}
+        assert claim_evidence.quote == "负责增长实验设计"
+        assert claim_evidence.locator_json == {}
