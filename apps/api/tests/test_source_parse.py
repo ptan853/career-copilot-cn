@@ -91,7 +91,21 @@ def test_normalize_source_parse_ignores_legacy_flat_events_shape():
     assert result.events == []
 
 
-def test_normalize_source_parse_rejects_jd_events():
+def test_normalize_source_parse_keeps_jd_warning_when_no_events():
+    raw = {
+        "source_type": "jd",
+        "source_subtype": "jd",
+        "sections": [],
+        "warnings": ["这是岗位描述。"],
+    }
+
+    result = normalize_source_parse(raw)
+
+    assert result.events == []
+    assert "这是岗位描述。" in result.warnings
+
+
+def test_normalize_source_parse_preserves_explicit_user_events_from_mixed_jd():
     raw = {
         "source_type": "jd",
         "source_subtype": "jd",
@@ -100,17 +114,19 @@ def test_normalize_source_parse_rejects_jd_events():
                 "section_type": "work",
                 "section_title": "工作经历",
                 "events": [
-                    {"event_type": "work", "title": "负责增长策略"}
+                    {"event_type": "internship", "title": "我在字节跳动做增长产品实习"}
                 ],
             }
         ],
-        "warnings": ["这是岗位描述。"],
+        "warnings": ["输入包含岗位描述，也包含用户自己的经历。"],
     }
 
     result = normalize_source_parse(raw)
 
-    assert result.events == []
-    assert "这是岗位描述。" in result.warnings
+    assert len(result.events) == 1
+    assert result.events[0].title == "我在字节跳动做增长产品实习"
+    assert result.events[0].section_type == "work"
+    assert result.events[0].status == "draft"
 
 
 def test_normalize_source_parse_maps_section_from_event_type_and_forces_draft():

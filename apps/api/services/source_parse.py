@@ -120,11 +120,6 @@ def normalize_source_parse(raw: dict[str, Any]) -> NormalizedParseResult:
         warnings=raw.get("warnings") if isinstance(raw.get("warnings"), list) else [],
     )
 
-    if result.source_type == "jd" or result.source_subtype == "jd":
-        if not result.warnings:
-            result.warnings.append("输入内容被识别为岗位描述，未写入用户职业经历。")
-        return result
-
     sections = raw.get("sections") if isinstance(raw.get("sections"), list) else []
     for section in sections:
         if not isinstance(section, dict):
