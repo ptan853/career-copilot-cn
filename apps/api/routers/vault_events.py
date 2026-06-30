@@ -200,7 +200,7 @@ def _uuid(value: str) -> uuid.UUID:
     try:
         return uuid.UUID(value)
     except ValueError:
-        raise HTTPException(status_code=401, detail="Token 无效")
+        raise HTTPException(status_code=404, detail="Resource not found")
 
 
 def _section_for_event(e: CareerEvent) -> dict:
@@ -250,13 +250,15 @@ def _group_events(events: list[dict]) -> list[dict]:
     groups: dict[str, dict] = {}
     for event in events:
         section_type = event["section_type"]
-        if section_type not in groups:
-            groups[section_type] = {
+        section_title = event["section_title"]
+        key = f"{section_type}:{section_title}"
+        if key not in groups:
+            groups[key] = {
                 "section_type": section_type,
-                "section_title": event["section_title"],
+                "section_title": section_title,
                 "events": [],
             }
-        groups[section_type]["events"].append(event)
+        groups[key]["events"].append(event)
     return sorted(
         groups.values(),
         key=lambda item: SECTION_ORDER.index(item["section_type"]) if item["section_type"] in SECTION_ORDER else len(SECTION_ORDER),

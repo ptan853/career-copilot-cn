@@ -28,8 +28,6 @@ class UpdateProfileBody(BaseModel):
     summary: Optional[str] = None
     years_of_experience: Optional[int] = None
     language_preferences: Optional[list] = None
-    ai_provider: Optional[str] = None
-    ai_api_key: Optional[str] = None
 
 
 def serialize_profile(profile: Profile) -> dict:
@@ -45,8 +43,8 @@ def serialize_profile(profile: Profile) -> dict:
         "summary": profile.summary,
         "years_of_experience": profile.years_of_experience,
         "language_preferences": profile.language_preferences,
-        "ai_provider": profile.ai_provider or "openai",
-        "has_ai_api_key": bool(profile.ai_api_key),
+        "ai_provider": getattr(profile, "ai_provider", "openai") or "openai",
+        "has_ai_api_key": bool(getattr(profile, "ai_api_key", None)),
         "updated_at": profile.updated_at.isoformat(),
     }
 
@@ -77,8 +75,6 @@ def update_profile(
         raise HTTPException(status_code=404, detail="Profile not found")
 
     update_data = body.model_dump(exclude_none=True)
-    if "ai_provider" in update_data:
-        update_data["ai_provider"] = "openai"
     for key, val in update_data.items():
         setattr(profile, key, val)
     session.add(profile)
@@ -157,38 +153,6 @@ def create_claim(
     return {"data": {"id": str(claim.id), "claim_text": claim.claim_text}}
 
 
-@router.patch("/claims/{claim_id}")
-def update_claim(
-    claim_id: str,
-    body: UpdateClaimBody,
-    user_id: str = Depends(get_current_user_id),
-    session: Session = Depends(get_session),
-):
-    claim = session.get(Claim, _uuid(claim_id))
-    if not claim or str(claim.user_id) != user_id:
-        raise HTTPException(status_code=404, detail="Claim not found")
-    update_data = body.model_dump(exclude_none=True)
-    for key, val in update_data.items():
-        setattr(claim, key, val)
-    session.add(claim)
-    session.commit()
-    return {"message": "已更新", "claim_id": claim_id}
-
-
-@router.delete("/claims/{claim_id}")
-def delete_claim(
-    claim_id: str,
-    user_id: str = Depends(get_current_user_id),
-    session: Session = Depends(get_session),
-):
-    claim = session.get(Claim, _uuid(claim_id))
-    if not claim or str(claim.user_id) != user_id:
-        raise HTTPException(status_code=404, detail="Claim not found")
-    session.delete(claim)
-    session.commit()
-    return {"message": "已删除", "claim_id": claim_id}
-
-
 def _uuid(value: str) -> uuid.UUID:
     try:
         return uuid.UUID(value)
@@ -200,16 +164,12 @@ def _uuid(value: str) -> uuid.UUID:
 # Review Queue
 # ============================================================
 
-class BatchConfirmBody(BaseModel):
-    event_ids: list[str]
-
-
 @router.get("/review-queue")
 def get_review_queue(
     user_id: str = Depends(get_current_user_id),
     session: Session = Depends(get_session),
 ):
-    """获取需要审核的事件列表（含 claims）"""
+    """获取需要审核的事件列表"""
     events = session.exec(
         select(CareerEvent).where(
             CareerEvent.user_id == user_id,
@@ -217,73 +177,17 @@ def get_review_queue(
         ).order_by(CareerEvent.updated_at.desc())
     ).all()
 
-    result = []
-    for e in events:
-        claims = session.exec(
-            select(Claim).where(Claim.career_event_id == e.id)
-        ).all()
-        result.append({
+    return {"data": [
+        {
             "id": str(e.id),
             "event_type": e.event_type,
             "title": e.title,
-            "role": e.role,
-            "organization": e.organization,
-            "time_start": e.time_start,
-            "time_end": e.time_end,
-            "description": e.description,
-            "tags": e.tags,
             "status": e.status,
             "source_confidence": e.source_confidence,
             "updated_at": e.updated_at.isoformat(),
-            "claims": [
-                {
-                    "id": str(c.id),
-                    "claim_text": c.claim_text,
-                    "claim_type": c.claim_type,
-                    "strength": c.strength,
-                }
-                for c in claims
-            ],
-        })
-
-    # 统计
-    total = session.exec(
-        select(CareerEvent).where(CareerEvent.user_id == user_id)
-    ).all()
-    confirmed_count = sum(1 for e in total if e.status == "confirmed")
-    review_count = len(events)
-
-    return {
-        "data": result,
-        "meta": {
-            "total_events": len(total),
-            "confirmed_events": confirmed_count,
-            "review_pending": review_count,
-            "progress_pct": round(confirmed_count / max(len(total), 1) * 100, 1),
-        },
-    }
-
-
-@router.post("/review-queue/batch-confirm")
-def batch_confirm(
-    body: BatchConfirmBody,
-    user_id: str = Depends(get_current_user_id),
-    session: Session = Depends(get_session),
-):
-    """批量确认事件"""
-    if not body.event_ids:
-        raise HTTPException(status_code=400, detail="请提供事件 ID 列表")
-
-    confirmed = 0
-    for eid in body.event_ids:
-        event = session.get(CareerEvent, eid)
-        if event and str(event.user_id) == user_id:
-            event.status = "confirmed"
-            session.add(event)
-            confirmed += 1
-
-    session.commit()
-    return {"message": f"已确认 {confirmed} 个事件", "confirmed_count": confirmed}
+        }
+        for e in events
+    ]}
 
 
 # ============================================================

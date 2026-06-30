@@ -52,6 +52,48 @@ def test_grouped_events_include_section_metadata(tmp_path):
         assert data[0]["events"][0]["title"] == "增长产品实习"
 
 
+def test_grouped_custom_sections_keep_distinct_titles(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'custom_sections.db'}", echo=False)
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        user = User(email="custom@example.com", display_name="Custom User")
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+
+        session.add(
+            CareerEvent(
+                user_id=user.id,
+                event_type="custom",
+                title="社群运营",
+                details_json={"section_type": "custom", "section_title": "社群经历"},
+                status="draft",
+            )
+        )
+        session.add(
+            CareerEvent(
+                user_id=user.id,
+                event_type="custom",
+                title="公开演讲",
+                details_json={"section_type": "custom", "section_title": "演讲经历"},
+                status="draft",
+            )
+        )
+        session.commit()
+
+        client = _client_for_user(user, session)
+        try:
+            response = client.get("/api/vault/events?grouped=true")
+        finally:
+            app.dependency_overrides.clear()
+
+        assert response.status_code == 200
+        sections = response.json()["data"]
+        assert {section["section_title"] for section in sections} == {"社群经历", "演讲经历"}
+        assert len(sections) == 2
+
+
 def test_delete_event_removes_claims_and_evidence(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'delete_event.db'}", echo=False)
     SQLModel.metadata.create_all(engine)
@@ -107,6 +149,36 @@ def test_delete_event_removes_claims_and_evidence(tmp_path):
         assert session.exec(select(Evidence).where(Evidence.claim_id == claim.id)).all() == []
 
 
+def test_delete_event_rejects_cross_user_and_malformed_id(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'delete_guard.db'}", echo=False)
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        owner = User(email="owner@example.com", display_name="Owner")
+        other = User(email="other@example.com", display_name="Other")
+        session.add(owner)
+        session.add(other)
+        session.commit()
+        session.refresh(owner)
+        session.refresh(other)
+
+        event = CareerEvent(user_id=owner.id, event_type="project", title="项目")
+        session.add(event)
+        session.commit()
+        session.refresh(event)
+
+        client = _client_for_user(other, session)
+        try:
+            cross_user_response = client.delete(f"/api/vault/events/{event.id}")
+            malformed_response = client.delete("/api/vault/events/not-a-uuid")
+        finally:
+            app.dependency_overrides.clear()
+
+        assert cross_user_response.status_code == 404
+        assert malformed_response.status_code == 404
+        assert session.get(CareerEvent, event.id) is not None
+
+
 def test_claim_endpoints_use_uuid_user_scope(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'claim_scope.db'}", echo=False)
     SQLModel.metadata.create_all(engine)
@@ -137,3 +209,36 @@ def test_claim_endpoints_use_uuid_user_scope(tmp_path):
         claims = list_response.json()["data"]
         assert len(claims) == 1
         assert claims[0]["claim_text"] == "完成核心功能"
+
+
+def test_claim_endpoints_reject_cross_user_event(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'claim_cross_user.db'}", echo=False)
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        owner = User(email="claim-owner@example.com", display_name="Owner")
+        other = User(email="claim-other@example.com", display_name="Other")
+        session.add(owner)
+        session.add(other)
+        session.commit()
+        session.refresh(owner)
+        session.refresh(other)
+
+        event = CareerEvent(user_id=owner.id, event_type="project", title="项目")
+        session.add(event)
+        session.commit()
+        session.refresh(event)
+
+        client = _client_for_user(other, session)
+        try:
+            create_response = client.post(
+                "/api/vault/claims",
+                json={"event_id": str(event.id), "claim_text": "不应创建"},
+            )
+            list_response = client.get(f"/api/vault/claims?event_id={event.id}")
+        finally:
+            app.dependency_overrides.clear()
+
+        assert create_response.status_code == 404
+        assert list_response.status_code == 404
+        assert session.exec(select(Claim).where(Claim.career_event_id == event.id)).all() == []
