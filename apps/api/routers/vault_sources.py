@@ -1,4 +1,5 @@
 """Vault Sources 路由 V2"""
+import logging
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -10,6 +11,7 @@ from sqlmodel import Session, select
 from database import get_session
 from models import SourceMaterial, BackgroundJob
 from auth_deps import get_current_user_id
+from services.file_reader import extract_text
 
 router = APIRouter(prefix="/api/vault/sources", tags=["vault-sources"])
 
@@ -22,10 +24,13 @@ ALLOWED_MIME = {
     "image/jpeg",
 }
 
+logger = logging.getLogger("vault_sources")
+
 
 class MultiSourceInput(BaseModel):
     text: str = ""
     urls: list[str] = []
+    input_hint: str = ""
 
 
 # ─── Create source (multi-input) ──────────────────────────────
@@ -47,6 +52,7 @@ async def create_source(
         title=title or "手动输入",
         raw_text=body.text,
         parse_status="uploaded",
+        metadata_json={"input_hint": body.input_hint.strip()} if body.input_hint.strip() else {},
     )
     session.add(source)
     session.commit()
@@ -59,6 +65,7 @@ async def create_source(
             "source_id": str(source.id),
             "text": body.text,
             "urls": body.urls,
+            "input_hint": body.input_hint,
         },
         status="queued",
     )
@@ -96,12 +103,22 @@ async def upload_source(
     saved_path = upload_dir / f"{file_id}{ext}"
     saved_path.write_bytes(content)
 
+    # 提取文本
+    raw_text = ""
+    if "pdf" in mime or ext in (".pdf", ".docx", ".doc", ".txt", ".md"):
+        raw_text = extract_text(str(saved_path), mime)
+        if raw_text:
+            logger.info("extracted %d chars from %s", len(raw_text), file.filename)
+        else:
+            logger.warning("no text extracted from %s", file.filename)
+
     source = SourceMaterial(
         user_id=user_id,
         source_type="file",
         title=file.filename or "未命名文件",
         mime_type=mime,
         file_url=str(saved_path),
+        raw_text=raw_text or None,
         parse_status="uploaded",
     )
     session.add(source)
@@ -167,7 +184,9 @@ def get_source(
             "title": source.title,
             "source_type": source.source_type,
             "parse_status": source.parse_status,
-            "raw_text_preview": (source.raw_text or "")[:500],
+            "raw_text_preview": (source.raw_text or "")[:2000],
+            "metadata_json": source.metadata_json or {},
+            "parse_error": source.parse_error,
             "created_at": source.created_at.isoformat(),
         }
     }
