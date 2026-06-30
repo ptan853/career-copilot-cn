@@ -3,57 +3,103 @@
 import { useState, useEffect } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
+import { getJob, getEvidenceMap, createEvidenceMap } from '@/lib/api-client'
 
-const DEMO_JOB = {
-  id: 'deepseek-harness',
-  title: 'Agent Harness Engineer',
-  company: 'DeepSeek Harness Team',
-  location: 'Shenzhen / Remote',
-  source: 'Company career site',
-  priority: 'high',
-  deadline: 'Jul 12',
-  match_score: 86,
-  raw_jd: '加入 DeepSeek Harness 团队，探索 Agent Harness 方向的未知前沿。关注 Agent loop、tool use、reasoning、planning、skills、memory、evaluation、safety guardrails。设计并实现通用的 Agent 框架，支持多模型切换、工具编排、沙箱执行和可观测性。要求：3-5 年工程经验，熟悉 Python/Go，有 LLM/Agent 相关项目经验。加分项：开源贡献、论文发表、性能基准评测经验。',
-  ai_analysis: {
-    must_have: ['Agent loop', 'Tool use', 'Evaluation'],
-    nice_to_have: ['Sandboxing', 'Benchmark', 'Memory'],
-    recommended_narrative: 'Position as an Agent infrastructure engineer with practical tool orchestration and safety experience.',
-  },
-  evidence_gaps: [
-    { label: 'Strong: Tool orchestration', desc: 'PM Agent + LangGraph migration', strength: 'strong' },
-    { label: 'Strong: Safety boundary', desc: 'Command sandbox project', strength: 'strong' },
-    { label: 'Weak: Agent evaluation', desc: 'Needs stronger evidence', strength: 'weak' },
-  ],
+const PRIORITY_CONFIG: Record<string, { label: string; cls: string }> = {
+  high:   { label: '高优先', cls: 'badge-red' },
+  normal: { label: '普通', cls: 'badge-amber' },
+  low:    { label: '低优先', cls: 'badge-gray' },
+}
+
+const EVENT_TYPE_CONFIG: Record<string, string> = {
+  work: '工作', internship: '实习', project: '项目', education: '教育',
+  certification: '证书', award: '获奖', publication: '发表', patent: '专利',
+  course: '课程', competition: '竞赛', open_source: '开源', startup: '创业',
+  volunteer: '志愿', language: '语言', custom: '其他',
 }
 
 export default function JobDetailPage() {
   const params = useParams()
-  const job = DEMO_JOB // In real app, fetch by params.id
+  const [job, setJob] = useState<any>(null)
+  const [evidenceMap, setEvidenceMap] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
+  const [mapping, setMapping] = useState(false)
+
+  const loadData = async () => {
+    if (!params.id) return
+    setLoading(true)
+    try {
+      const [jobRes, emRes] = await Promise.all([
+        getJob(params.id as string),
+        getEvidenceMap(params.id as string).catch(() => ({ data: null })),
+      ])
+      setJob((jobRes as any).data)
+      setEvidenceMap((emRes as any).data)
+    } catch { setJob(null) } finally { setLoading(false) }
+  }
+
+  useEffect(() => { loadData() }, [params.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleMap = async () => {
+    if (!params.id) return
+    setMapping(true)
+    try {
+      const res: any = await createEvidenceMap(params.id as string)
+      setEvidenceMap(res.data)
+    } catch {} finally { setMapping(false) }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <p className="text-sm text-app-muted">正在加载岗位详情...</p>
+      </div>
+    )
+  }
+
+  if (!job) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20">
+        <p className="text-lg font-black">岗位不存在</p>
+        <Link href="/jobs" className="btn primary mt-5">返回岗位库</Link>
+      </div>
+    )
+  }
+
+  const title = job.role || job.company || '未命名岗位'
+  const jdAnalysis = job.jd_analysis
+
+  const selectedEvents = evidenceMap?.selected_events || []
+  const omittedEvents = evidenceMap?.omitted_events || []
+  const gaps = evidenceMap?.gaps || {}
+  const gapKeys = Object.keys(gaps)
+  const hasEvidenceMap = !!evidenceMap
 
   return (
     <div>
       <div className="flex items-start justify-between gap-5 mb-5">
         <div>
           <h1 className="text-[28px] font-bold tracking-normal leading-tight">岗位详情</h1>
-          <p className="text-[13px] text-app-muted mt-1.5">A role-specific workspace before any document is generated.</p>
+          <p className="text-[13px] text-app-muted mt-1.5">每个岗位都有自己的分析、证据映射和生成工作区。</p>
         </div>
         <div className="flex gap-2">
-          <button className="btn">Archive</button>
-          <button className="btn primary">Generate materials</button>
+          <Link href="/jobs" className="btn">返回岗位库</Link>
+          <button className="btn primary">生成材料</button>
         </div>
       </div>
 
       {/* Header card */}
-      <div className="bg-white border border-app-line rounded-lg p-4 mb-4">
+      <div className="app-card p-5 mb-4">
         <div className="flex justify-between gap-5">
           <div>
-            <span className="badge-blue">Machine Learning</span>
-            <h2 className="text-[22px] font-bold mt-2">{job.company} · {job.title}</h2>
-            <p className="text-[13px] text-app-muted mt-1.5">{job.source} · {job.location} · Priority {job.priority} · Deadline {job.deadline}</p>
-          </div>
-          <div className="text-right">
-            <p className="text-[34px] font-extrabold text-app-green leading-none">{job.match_score}</p>
-            <p className="text-xs text-app-muted mt-1">Match score</p>
+            <div className="flex gap-2 mb-2">
+              <span className="badge-blue">{job.channel || '直接添加'}</span>
+              {job.priority && <span className={PRIORITY_CONFIG[job.priority]?.cls || 'badge-gray'}>{PRIORITY_CONFIG[job.priority]?.label || job.priority}</span>}
+            </div>
+            <h2 className="text-[22px] font-bold">{job.company && `${job.company} · `}{title}</h2>
+            <p className="text-[13px] text-app-muted mt-1.5">
+              {[job.channel && `渠道: ${job.channel}`, job.city && `地点: ${job.city}`, job.deadline && `截止: ${job.deadline.slice(0, 10)}`].filter(Boolean).join(' · ')}
+            </p>
           </div>
         </div>
       </div>
@@ -61,77 +107,149 @@ export default function JobDetailPage() {
       {/* 3-column grid */}
       <div className="grid grid-cols-3 gap-4 items-start">
         {/* Raw JD */}
-        <div className="bg-white border border-app-line rounded-lg">
+        <div className="app-card">
           <div className="px-4 py-3.5 border-b border-app-line flex items-center justify-between">
-            <h2 className="text-[17px] font-semibold">Raw JD</h2>
-            <span className="badge-gray">Captured URL</span>
+            <h2 className="text-[17px] font-semibold">原始 JD</h2>
+            <span className="badge-gray">{job.raw_jd ? `${job.raw_jd.length} 字` : '无 JD'}</span>
           </div>
           <div className="p-4">
-            <p className="text-sm leading-relaxed text-app-ink">{job.raw_jd}</p>
-            <div className="h-px bg-app-line-soft my-3.5" />
-            <button className="btn w-full text-xs">Open original source</button>
+            {job.raw_jd ? (
+              <div>
+                <p className="text-sm leading-relaxed text-app-ink whitespace-pre-wrap">{job.raw_jd}</p>
+                {job.source_url && (
+                  <>
+                    <div className="h-px bg-app-line-soft my-3.5" />
+                    <a href={job.source_url} target="_blank" rel="noopener noreferrer" className="btn w-full text-xs inline-flex">查看原始来源</a>
+                  </>
+                )}
+              </div>
+            ) : (
+              <p className="text-xs text-app-muted">还没有粘贴 JD。你可以从 BOSS 直聘、拉勾、猎聘等渠道复制岗位描述粘贴到这里。</p>
+            )}
           </div>
         </div>
 
         {/* AI analysis */}
-        <div className="bg-white border border-app-line rounded-lg">
+        <div className="app-card">
           <div className="px-4 py-3.5 border-b border-app-line flex items-center justify-between">
-            <h2 className="text-[17px] font-semibold">AI analysis</h2>
-            <span className="badge-cyan">Target profile</span>
+            <h2 className="text-[17px] font-semibold">AI 分析</h2>
+            <span className="badge-cyan">{jdAnalysis ? '已分析' : '待分析'}</span>
           </div>
           <div className="p-4 space-y-4">
-            <div>
-              <h3 className="text-xs font-extrabold text-app-muted uppercase tracking-wider mb-2">Must have</h3>
-              <div className="flex gap-1.5 flex-wrap">
-                {job.ai_analysis.must_have.map(t => <span key={t} className="badge-blue">{t}</span>)}
+            {jdAnalysis ? (
+              <>
+                {jdAnalysis.must_have && jdAnalysis.must_have.length > 0 && (
+                  <div>
+                    <h3 className="text-xs font-extrabold text-app-muted uppercase tracking-wider mb-2">必须条件</h3>
+                    <div className="flex gap-1.5 flex-wrap">
+                      {jdAnalysis.must_have.map((t: string, i: number) => <span key={i} className="badge-blue">{t}</span>)}
+                    </div>
+                  </div>
+                )}
+                {jdAnalysis.nice_to_have && jdAnalysis.nice_to_have.length > 0 && (
+                  <div>
+                    <h3 className="text-xs font-extrabold text-app-muted uppercase tracking-wider mb-2">加分项</h3>
+                    <div className="flex gap-1.5 flex-wrap">
+                      {jdAnalysis.nice_to_have.map((t: string, i: number) => <span key={i} className="badge-gray">{t}</span>)}
+                    </div>
+                  </div>
+                )}
+                {jdAnalysis.recommended_narrative && (
+                  <div>
+                    <h3 className="text-xs font-extrabold text-app-muted uppercase tracking-wider mb-2">推荐定位方向</h3>
+                    <p className="text-sm mt-1">{jdAnalysis.recommended_narrative}</p>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="rounded-[20px] border border-dashed border-app-line bg-app-panel-soft p-6 text-center">
+                <p className="text-sm font-black">JD 分析尚未生成</p>
+                <p className="mt-2 text-xs text-app-muted">粘贴完整的 JD 后，AI 会提取关键词、必须条件和推荐叙事方向。</p>
+                <button className="btn primary mt-4 text-xs" disabled>AI 分析（即将上线）</button>
               </div>
-            </div>
-            <div>
-              <h3 className="text-xs font-extrabold text-app-muted uppercase tracking-wider mb-2">Nice to have</h3>
-              <div className="flex gap-1.5 flex-wrap">
-                {job.ai_analysis.nice_to_have.map(t => <span key={t} className="badge-gray">{t}</span>)}
-              </div>
-            </div>
-            <div>
-              <h3 className="text-xs font-extrabold text-app-muted uppercase tracking-wider mb-2">Recommended narrative</h3>
-              <p className="text-sm mt-1">{job.ai_analysis.recommended_narrative}</p>
-            </div>
+            )}
           </div>
         </div>
 
-        {/* Evidence gaps */}
-        <div className="bg-white border border-app-line rounded-lg">
-          <div className="px-4 py-3.5 border-b border-app-line">
-            <h2 className="text-[17px] font-semibold">Evidence gaps</h2>
+        {/* Evidence mapping */}
+        <div className="app-card">
+          <div className="px-4 py-3.5 border-b border-app-line flex items-center justify-between">
+            <h2 className="text-[17px] font-semibold">证据映射</h2>
+            <div className="flex gap-2">
+              {hasEvidenceMap && (
+                <button className="btn text-xs h-7" onClick={handleMap} disabled={mapping}>
+                  {mapping ? '映射中...' : '重新映射'}
+                </button>
+              )}
+            </div>
           </div>
-          <div className="p-4 space-y-3">
-            {job.evidence_gaps.map((gap, i) => (
-              <div key={i} className="flex gap-3 p-3 border border-app-line-soft rounded-md">
-                <div className={`source-dot ${gap.strength === 'strong' ? 'confirmed' : 'warning'}`}>
-                  {String.fromCharCode(65 + i)}
-                </div>
-                <div>
-                  <h3 className="text-sm font-semibold">{gap.label}</h3>
-                  <p className="text-xs text-app-muted">{gap.desc}</p>
-                </div>
+          <div className="p-4 space-y-4">
+            {hasEvidenceMap ? (
+              <div className="space-y-3">
+                {selectedEvents.length > 0 && (
+                  <div>
+                    <h3 className="text-xs font-extrabold text-app-muted uppercase tracking-wider mb-2">
+                      已匹配 {selectedEvents.length} 条经历
+                    </h3>
+                    <div className="space-y-2">
+                      {selectedEvents.map((ev: any) => (
+                        <div key={ev.id} className="flex items-center gap-2 rounded-[14px] bg-[#f0f7f1] p-2">
+                          <div className="source-dot confirmed" style={{ width: 20, height: 20, fontSize: 9 }}>✓</div>
+                          <div>
+                            <p className="text-sm font-semibold">{ev.title}</p>
+                            <p className="text-[11px] text-app-muted">
+                              {[EVENT_TYPE_CONFIG[ev.event_type], ev.organization].filter(Boolean).join(' · ')}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {omittedEvents.length > 0 && (
+                  <div>
+                    <h3 className="text-xs font-extrabold text-app-muted uppercase tracking-wider mb-2">
+                      未匹配 {omittedEvents.length} 条
+                    </h3>
+                    <div className="flex gap-1.5 flex-wrap">
+                      {omittedEvents.map((ev: any) => (
+                        <span key={ev.id} className="badge-gray text-[11px]">{ev.title}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {gapKeys.length > 0 && (
+                  <div>
+                    <h3 className="text-xs font-extrabold text-app-muted uppercase tracking-wider mb-2">证据缺口</h3>
+                    <div className="flex gap-1.5 flex-wrap">
+                      {gapKeys.map(gap => (
+                        <span key={gap} className="badge-amber">{gap}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {evidenceMap.rationale && (
+                  <div className="rounded-[14px] bg-[#f8f4ef] p-3">
+                    <p className="text-[11px] text-app-muted">{evidenceMap.rationale}</p>
+                  </div>
+                )}
               </div>
-            ))}
-            <Link href="/evidence" className="btn primary w-full text-xs inline-flex">Open evidence map</Link>
+            ) : (
+              <div className="rounded-[20px] border border-dashed border-app-line bg-app-panel-soft p-6 text-center">
+                <p className="text-sm font-black">尚未映射证据</p>
+                <p className="mt-2 text-xs text-app-muted">系统会基于 JD 关键词自动匹配你的职业经历。</p>
+                {job.raw_jd ? (
+                  <button className="btn primary mt-4 text-xs" onClick={handleMap} disabled={mapping}>
+                    {mapping ? '映射中...' : '执行证据映射'}
+                  </button>
+                ) : (
+                  <p className="mt-3 text-xs text-app-muted">请先粘贴 JD 文本再执行映射</p>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>
-
-      <style jsx>{`
-        .btn { height: 36px; border: 1px solid #d9dee7; background: #fff; color: #172033; padding: 0 12px; border-radius: 7px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; font-weight: 650; cursor: pointer; white-space: nowrap; font-size: 14px; }
-        .btn.primary { background: #1f5eff; color: #fff; border-color: #1f5eff; }
-        .btn:hover { opacity: 0.9; }
-        .badge-gray { background: #f1f3f6; color: #5f6b7c; border: 1px solid #e2e6ec; display: inline-flex; align-items: center; gap: 5px; height: 23px; padding: 0 8px; border-radius: 999px; font-size: 12px; font-weight: 700; white-space: nowrap; }
-        .badge-blue { background: #eaf0ff; color: #1741a6; border: 1px solid #d8e3ff; display: inline-flex; align-items: center; gap: 5px; height: 23px; padding: 0 8px; border-radius: 999px; font-size: 12px; font-weight: 700; white-space: nowrap; }
-        .badge-cyan { background: #e6f5f5; color: #0f8b8d; border: 1px solid #c8e8e9; display: inline-flex; align-items: center; gap: 5px; height: 23px; padding: 0 8px; border-radius: 999px; font-size: 12px; font-weight: 700; white-space: nowrap; }
-        .source-dot { width: 26px; height: 26px; border-radius: 6px; background: #eef2f8; border: 1px solid #d9dee7; color: #526176; display: grid; place-items: center; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-weight: 800; font-size: 11px; flex-shrink: 0; }
-        .source-dot.confirmed { background: #e7f6ef; border-color: #cceada; color: #16805d; }
-        .source-dot.warning { background: #fff2dc; border-color: #ffe1ad; color: #b97913; }
-      `}</style>
     </div>
   )
 }

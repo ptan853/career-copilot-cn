@@ -9,6 +9,8 @@ from routers.core import router as core_router
 from routers.vault import router as vault_router
 from routers.vault_sources import router as vault_sources_router
 from routers.vault_events import router as vault_events_router
+from routers.jobs import router as jobs_router
+from routers.artifacts import router as artifacts_router
 from database import init_db
 
 
@@ -37,3 +39,5 @@ app.include_router(core_router)
 app.include_router(vault_router)
 app.include_router(vault_sources_router)
 app.include_router(vault_events_router)
+app.include_router(jobs_router)
+app.include_router(artifacts_router)

@@ -1,149 +1,356 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
+import {
+  getArtifacts, getArtifact, getArtifactVersions, saveArtifactVersion,
+  updateArtifact, deleteArtifact,
+} from '@/lib/api-client'
 
-const DOCUMENTS = [
-  { id: 'r1', letter: 'R', title: 'DeepSeek Resume', version: 'v3 · saved', active: true },
-  { id: 'c1', letter: 'C', title: 'Cover Letter', version: 'v1 · draft', active: false },
-  { id: 'b1', letter: 'B', title: 'Boss Opening', version: 'ready', active: false },
-]
-
-const AI_ACTIONS = [
-  'Make it more concise',
-  'Use stronger action verbs',
-  'Add JD keywords',
-  'Compress to one page',
+const AI_PRESETS = [
+  { id: 'concise', label: '更简洁', prompt: 'Make it more concise' },
+  { id: 'verbs', label: '更强调动作', prompt: 'Use stronger action verbs' },
+  { id: 'keywords', label: '添加 JD 关键词', prompt: 'Add JD keywords from target role' },
+  { id: 'compress', label: '压缩到一页', prompt: 'Compress to one page' },
 ]
 
 export default function EditorPage() {
-  const [selectedDoc, setSelectedDoc] = useState('r1')
-  const [template, setTemplate] = useState('ats')
+  const [artifacts, setArtifacts] = useState<any[]>([])
+  const [selectedId, setSelectedId] = useState<string>('')
+  const [artifact, setArtifact] = useState<any>(null)
+  const [versions, setVersions] = useState<any[]>([])
+  const [currentVersion, setCurrentVersion] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
+  const [template, setTemplate] = useState('ats_classic')
   const [aiPrompt, setAiPrompt] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [editingTitle, setEditingTitle] = useState(false)
+  const [titleValue, setTitleValue] = useState('')
+
+  const loadArtifacts = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res: any = await getArtifacts()
+      const items = res.data || []
+      setArtifacts(items)
+      if (items[0] && !selectedId) {
+        setSelectedId(items[0].id)
+      }
+    } catch {} finally { setLoading(false) }
+  }, [])
+
+  useEffect(() => { loadArtifacts() }, [loadArtifacts])
+
+  const loadDetail = useCallback(async (id: string) => {
+    try {
+      const [artRes, verRes] = await Promise.all([
+        getArtifact(id),
+        getArtifactVersions(id),
+      ])
+      const art = (artRes as any).data
+      setArtifact(art)
+      setVersions((verRes as any).data || [])
+      setCurrentVersion(art?.current_version || null)
+      setTemplate(art?.template || 'ats_classic')
+    } catch { setArtifact(null) }
+  }, [])
+
+  useEffect(() => {
+    if (selectedId) loadDetail(selectedId)
+  }, [selectedId, loadDetail])
+
+  const handleSaveVersion = async () => {
+    if (!selectedId) return
+    setSaving(true)
+    try {
+      await saveArtifactVersion(selectedId, {
+        structured_json: currentVersion?.structured_json || {},
+        markdown: currentVersion?.markdown,
+        change_summary: aiPrompt || '手动保存',
+      })
+      loadDetail(selectedId)
+      setAiPrompt('')
+    } catch {} finally { setSaving(false) }
+  }
+
+  const handleApplyAIPreset = async (prompt: string) => {
+    setAiPrompt(prompt)
+    // AI edit is not implemented yet — save current version as a record
+    await handleSaveVersion()
+  }
+
+  const handleDeleteArtifact = async (id: string) => {
+    try {
+      await deleteArtifact(id)
+      setSelectedId('')
+      loadArtifacts()
+    } catch {}
+  }
+
+  const handleUpdateTitle = async () => {
+    if (!selectedId || !titleValue.trim()) return
+    try {
+      await updateArtifact(selectedId, { title: titleValue.trim() })
+      setEditingTitle(false)
+      loadDetail(selectedId)
+      loadArtifacts()
+    } catch {}
+  }
+
+  // Build A4 preview from structured JSON
+  const buildPreviewContent = () => {
+    if (!currentVersion?.structured_json) return null
+    const s = currentVersion.structured_json
+    return {
+      summary: s.summary || '',
+      experience: s.experience || [],
+      projects: s.projects || [],
+      skills: s.skills || [],
+      contact: s.contact || {},
+      courses: s.courses || [],
+      awards: s.awards || [],
+    }
+  }
+
+  const preview = buildPreviewContent()
 
   return (
     <div>
       <div className="flex items-start justify-between gap-5 mb-5">
         <div>
           <h1 className="text-[28px] font-bold tracking-normal leading-tight">编辑器</h1>
-          <p className="text-[13px] text-app-muted mt-1.5">A4 preview, structured editing, source view, version history, verified export.</p>
+          <p className="text-[13px] text-app-muted mt-1.5">结构化编辑、版本历史、来源查看、验证导出。</p>
         </div>
         <div className="flex gap-2 items-center flex-wrap">
-          <select value={template} onChange={e => setTemplate(e.target.value)} className="input w-[150px] h-[34px] text-sm">
-            <option value="ats">ATS Classic</option>
-            <option value="modern">Engineer Modern</option>
+          <select value={template} onChange={e => { setTemplate(e.target.value); if (selectedId) updateArtifact(selectedId, { template: e.target.value }).catch(() => {}) }} className="input w-[150px] h-[34px] text-sm">
+            <option value="ats_classic">ATS 经典</option>
+            <option value="modern">工程师现代</option>
           </select>
-          <button className="btn text-xs">Preview</button>
-          <button className="btn text-xs">Source</button>
-          <button className="btn text-xs">Copy Markdown</button>
-          <button className="btn primary text-xs">Export PDF</button>
+          <button className="btn text-xs" onClick={handleSaveVersion} disabled={saving || !selectedId}>
+            {saving ? '保存中...' : '保存版本'}
+          </button>
+          <button className="btn primary text-xs" onClick={() => loadArtifacts()}>刷新</button>
         </div>
       </div>
 
       <div className="grid grid-cols-[240px_minmax(0,1fr)_330px] gap-4 items-start">
         {/* Document list */}
-        <div className="bg-white border border-app-line rounded-lg">
-          <div className="px-4 py-3.5 border-b border-app-line">
-            <h2 className="text-[17px] font-semibold">Documents</h2>
+        <div className="app-card">
+          <div className="px-4 py-3.5 border-b border-app-line flex items-center justify-between">
+            <h2 className="text-[17px] font-semibold">文档列表</h2>
+            <span className="badge-gray">{artifacts.length}</span>
           </div>
-          <div className="p-4 space-y-3">
-            {DOCUMENTS.map(doc => (
-              <div
-                key={doc.id}
-                onClick={() => setSelectedDoc(doc.id)}
-                className={`flex gap-3 p-3 border rounded-md cursor-pointer transition-colors ${
-                  selectedDoc === doc.id ? 'border-[#aac0ff] bg-[#f7f9ff]' : 'border-app-line-soft bg-white'
-                }`}
-              >
-                <div className="source-dot">{doc.letter}</div>
-                <div>
-                  <h3 className="text-sm font-semibold">{doc.title}</h3>
-                  <p className="text-xs text-app-muted">{doc.version}</p>
-                </div>
+          <div className="p-3 space-y-2">
+            {loading && <p className="text-xs text-app-muted px-2">加载中...</p>}
+            {!loading && artifacts.length === 0 && (
+              <div className="p-4 text-center">
+                <p className="text-xs text-app-muted">暂无文档</p>
+                <p className="text-xs text-app-muted mt-1">去生成页创建你的第一份文档</p>
               </div>
-            ))}
+            )}
+            {artifacts.map(doc => {
+              const typeLabel: Record<string, string> = { resume: '简历', cover_letter: '求职信', boss_opening: '打招呼', referral_qa: '内推' }
+              return (
+                <div
+                  key={doc.id}
+                  className={`flex items-center gap-2 p-2.5 rounded-[14px] cursor-pointer transition-colors ${
+                    selectedId === doc.id ? 'bg-[#eaf0ff] border border-app-blue/20' : 'bg-[#f8f4ef] border border-transparent'
+                  }`}
+                >
+                  <div
+                    className="flex-1 min-w-0"
+                    onClick={() => setSelectedId(doc.id)}
+                  >
+                    <h3 className="text-sm font-semibold truncate">{doc.title}</h3>
+                    <p className="text-[11px] text-app-muted">
+                      {typeLabel[doc.artifact_type] || doc.artifact_type} · {doc.template}
+                    </p>
+                  </div>
+                  <button
+                    className="text-[10px] text-red-400 hover:text-red-600 font-bold flex-shrink-0"
+                    onClick={(e) => { e.stopPropagation(); handleDeleteArtifact(doc.id) }}
+                    title="删除"
+                  >
+                    删除
+                  </button>
+                </div>
+              )
+            })}
           </div>
         </div>
 
         {/* A4 Preview */}
-        <div className="bg-white border border-app-line rounded-lg">
+        <div className="app-card">
+          <div className="px-4 py-3.5 border-b border-app-line flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <h2 className="text-[17px] font-semibold">A4 预览</h2>
+              {artifact && (
+                editingTitle ? (
+                  <div className="flex gap-1">
+                    <input
+                      className="input text-xs h-6 w-48"
+                      value={titleValue}
+                      onChange={e => setTitleValue(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') handleUpdateTitle() }}
+                      autoFocus
+                    />
+                    <button className="btn primary text-[10px] h-6 px-2" onClick={handleUpdateTitle}>保存</button>
+                    <button className="btn text-[10px] h-6 px-2" onClick={() => setEditingTitle(false)}>取消</button>
+                  </div>
+                ) : (
+                  <span
+                    className="text-xs text-app-muted cursor-pointer hover:text-app-blue"
+                    onClick={() => { setEditingTitle(true); setTitleValue(artifact.title) }}
+                    title="点击编辑标题"
+                  >
+                    {artifact.title}
+                  </span>
+                )
+              )}
+            </div>
+            {currentVersion && (
+              <span className="badge-gray">版本 {currentVersion.version_number}</span>
+            )}
+          </div>
           <div className="p-[40px] max-w-[680px] mx-auto">
-            <h1 className="text-xl font-bold text-center tracking-tight mb-1">谭沛烽</h1>
-            <p className="text-xs text-center text-app-muted mb-5">tan19991103@outlook.com · 178-0123-1696 · 长沙 / 深圳 · GitHub Portfolio</p>
+            {!artifact ? (
+              <div className="text-center py-12">
+                <p className="text-xs text-app-muted">选择左侧文档查看预览</p>
+              </div>
+            ) : !preview ? (
+              <div className="text-center py-12">
+                <p className="text-sm font-black">暂无内容</p>
+                <p className="text-xs text-app-muted mt-2">此文档尚未包含结构化内容。</p>
+              </div>
+            ) : (
+              <>
+                {/* Contact */}
+                {preview.contact && (
+                  <div className="text-center mb-4">
+                    <h1 className="text-xl font-bold tracking-tight">{preview.contact.name || '姓名'}</h1>
+                    <p className="text-xs text-app-muted mt-1">
+                      {[preview.contact.email, preview.contact.phone, preview.contact.location].filter(Boolean).join(' · ')}
+                    </p>
+                  </div>
+                )}
 
-            <h2 className="text-sm font-bold border-b-2 border-app-blue pb-1 mb-2.5">Summary</h2>
-            <p className="text-xs leading-relaxed mb-5">帝国理工大学硕士，专注 LLM Agent 架构、工具调用、多步任务拆解与上下文管理。具备企业级 Agent 工具编排、算法服务化和优化系统落地经验。</p>
+                {/* Summary */}
+                {preview.summary && (
+                  <div className="mb-4">
+                    <h2 className="text-sm font-bold border-b-2 border-app-blue pb-1 mb-2">个人简介</h2>
+                    <p className="text-xs leading-relaxed">{preview.summary}</p>
+                  </div>
+                )}
 
-            <h2 className="text-sm font-bold border-b-2 border-app-blue pb-1 mb-2.5">Experience</h2>
-            <p className="text-xs font-bold mt-2.5">Agent 算法工程师 — 武汉光庭信息科技 · 2026</p>
-            <ul className="text-xs space-y-1 mt-1 mb-3">
-              <li>• 设计 PM Agent 智能项目管理助手，支持项目、任务、人员信息的自然语言查询与可视化报告生成。</li>
-              <li>• 通过 ToolManager 统一管理本地与远程工具，支持模型自主规划多步工具调用、复杂查询拆解与上下文注入。</li>
-              <li>• 构造 search/call/list 元工具，将 PM Agent 迁移至 LangGraph DeepAgent 架构，实现工具发现、执行与结果查看统一接口。</li>
-            </ul>
+                {/* Experience */}
+                {preview.experience.length > 0 && (
+                  <div className="mb-4">
+                    <h2 className="text-sm font-bold border-b-2 border-app-blue pb-1 mb-2">工作经历</h2>
+                    {preview.experience.map((exp: any, i: number) => (
+                      <div key={i} className="mb-3">
+                        <p className="text-xs font-bold">{exp.role || exp.title} — {exp.organization}</p>
+                        <p className="text-[10px] text-app-muted">{[exp.time_start, exp.time_end].filter(Boolean).join(' — ')}</p>
+                        {(exp.bullets || []).length > 0 ? (
+                          <ul className="text-xs space-y-0.5 mt-1">
+                            {exp.bullets.map((b: string, j: number) => (
+                              <li key={j}>• {b}</li>
+                            ))}
+                          </ul>
+                        ) : exp.description ? (
+                          <p className="text-xs mt-0.5">{exp.description}</p>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                )}
 
-            <p className="text-xs font-bold mt-2.5">深度学习与预测优化算法工程师 — 吉利-利星能储能科技 · 2025-2026</p>
-            <ul className="text-xs space-y-1 mt-1 mb-3">
-              <li>• 构建面向储能电站收益最大化的 MILP 优化系统，使用 Pyomo 与 HiGHS 综合考虑 SOC、功率、效率等约束。</li>
-              <li>• 使用 FastAPI 将核心算法封装为 RESTful 服务，支持内部系统调用与外部平台集成。</li>
-            </ul>
+                {/* Projects */}
+                {preview.projects.length > 0 && (
+                  <div className="mb-4">
+                    <h2 className="text-sm font-bold border-b-2 border-app-blue pb-1 mb-2">项目经历</h2>
+                    {preview.projects.map((proj: any, i: number) => (
+                      <div key={i} className="mb-2">
+                        <p className="text-xs font-bold">{proj.title}</p>
+                        {(proj.bullets || []).length > 0 && (
+                          <ul className="text-xs space-y-0.5 mt-0.5">
+                            {proj.bullets.map((b: string, j: number) => (
+                              <li key={j}>• {b}</li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
 
-            <h2 className="text-sm font-bold border-b-2 border-app-blue pb-1 mb-2.5">Projects</h2>
-            <p className="text-xs font-bold mt-2.5">Career Vault Resume Skill — Python CLI, JSON Schema, Agents</p>
-            <ul className="text-xs space-y-1 mt-1 mb-3">
-              <li>• 设计 local-first 职业身份与经历记忆 vault skill，支持 profile、source material、career events 和 claims。</li>
-            </ul>
-
-            <h2 className="text-sm font-bold border-b-2 border-app-blue pb-1 mb-2.5">Skills</h2>
-            <p className="text-xs leading-relaxed mt-2.5"><strong>Agent:</strong> LangChain, LangGraph, Tool Calling, Context Injection, Memory</p>
-            <p className="text-xs leading-relaxed"><strong>Engineering:</strong> Python, FastAPI, Docker, Linux, RESTful API</p>
+                {/* Skills */}
+                {preview.skills.length > 0 && (
+                  <div className="mb-4">
+                    <h2 className="text-sm font-bold border-b-2 border-app-blue pb-1 mb-2">技能</h2>
+                    <p className="text-xs leading-relaxed">{preview.skills.join(' · ')}</p>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         </div>
 
-        {/* AI Edit Assistant */}
-        <div className="bg-white border border-app-line rounded-lg">
-          <div className="px-4 py-3.5 border-b border-app-line flex items-center justify-between">
-            <h2 className="text-[17px] font-semibold">AI Edit Assistant</h2>
-            <span className="badge-violet">Scoped</span>
-          </div>
-          <div className="p-4 space-y-3">
-            <textarea
-              className="input min-h-[80px] resize-y text-sm"
-              placeholder="e.g. Make the PM Agent bullets more concise, but keep source-backed claims only."
-              value={aiPrompt}
-              onChange={e => setAiPrompt(e.target.value)}
-            />
-            <button className="btn primary w-full text-xs">Apply AI edit</button>
-            <div className="h-px bg-app-line-soft" />
-            {AI_ACTIONS.map(action => (
-              <button key={action} className="btn w-full text-xs">{action}</button>
-            ))}
-            <div className="h-px bg-app-line-soft" />
-            <div className="p-3 border border-app-line-soft rounded-md bg-[#f9fafb] text-xs text-app-muted">
-              <p className="font-semibold mb-1">Last change:</p>
-              <p>summary rewritten from confirmed claims only. No weak claims used.</p>
+        {/* AI Edit Assistant + Versions */}
+        <div className="space-y-3">
+          {/* AI Edit */}
+          <div className="app-card">
+            <div className="px-4 py-3.5 border-b border-app-line flex items-center justify-between">
+              <h2 className="text-[17px] font-semibold">AI 编辑</h2>
             </div>
-            <div className="p-3.5 rounded-md bg-app-panel-soft border border-app-line-soft">
-              <h3 className="text-xs font-extrabold text-app-muted uppercase tracking-wider mb-2">Export verification</h3>
-              <div className="flex gap-1.5 flex-wrap">
-                <span className="badge-green">Text layer</span>
-                <span className="badge-green">1 page</span>
-                <span className="badge-green">Contact present</span>
-              </div>
+            <div className="p-4 space-y-3">
+              <textarea
+                className="input min-h-[80px] resize-y text-sm"
+                placeholder="输入编辑指令，如：让 PM Agent 的描述更简洁"
+                value={aiPrompt}
+                onChange={e => setAiPrompt(e.target.value)}
+              />
+              <button className="btn primary w-full text-xs" onClick={handleSaveVersion} disabled={saving || !selectedId}>
+                {saving ? '保存中...' : '保存当前版本'}
+              </button>
+              <div className="h-px bg-app-line-soft" />
+              {AI_PRESETS.map(action => (
+                <button
+                  key={action.id}
+                  className="btn w-full text-xs"
+                  onClick={() => handleApplyAIPreset(action.prompt)}
+                >
+                  {action.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Version history */}
+          <div className="app-card">
+            <div className="px-4 py-3.5 border-b border-app-line">
+              <h2 className="text-[17px] font-semibold">版本历史</h2>
+            </div>
+            <div className="p-4 space-y-2 max-h-[300px] overflow-y-auto">
+              {versions.length > 0 ? versions.map((v: any) => (
+                <div
+                  key={v.id}
+                  className={`rounded-[12px] p-2.5 cursor-pointer transition-colors ${
+                    currentVersion?.id === v.id ? 'bg-[#eaf0ff] border border-app-blue/20' : 'bg-[#f8f4ef] border border-transparent'
+                  }`}
+                  onClick={() => setCurrentVersion(v)}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold">v{v.version_number}</span>
+                    <span className="text-[10px] text-app-muted">{v.created_by}</span>
+                  </div>
+                  <p className="text-[11px] text-app-muted mt-0.5 truncate">{v.change_summary || '—'}</p>
+                </div>
+              )) : (
+                <p className="text-xs text-app-muted">暂无版本记录</p>
+              )}
             </div>
           </div>
         </div>
       </div>
-
-      <style jsx>{`
-        .btn { height: 36px; border: 1px solid #d9dee7; background: #fff; color: #172033; padding: 0 12px; border-radius: 7px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; font-weight: 650; cursor: pointer; white-space: nowrap; font-size: 14px; }
-        .btn.primary { background: #1f5eff; color: #fff; border-color: #1f5eff; }
-        .btn:hover { opacity: 0.9; }
-        .input { border: 1px solid #d9dee7; border-radius: 7px; background: #fff; color: #172033; padding: 8px 11px; font-size: 14px; width: 100%; }
-        .input:focus { outline: none; border-color: #1f5eff; }
-        .badge-green { background: #e7f6ef; color: #16805d; border: 1px solid #cceada; display: inline-flex; align-items: center; gap: 5px; height: 23px; padding: 0 8px; border-radius: 999px; font-size: 12px; font-weight: 700; white-space: nowrap; }
-        .badge-violet { background: #f4eaff; color: #6d1fff; border: 1px solid #e2d4ff; display: inline-flex; align-items: center; gap: 5px; height: 23px; padding: 0 8px; border-radius: 999px; font-size: 12px; font-weight: 700; white-space: nowrap; }
-        .source-dot { width: 26px; height: 26px; border-radius: 6px; background: #eef2f8; border: 1px solid #d9dee7; color: #526176; display: grid; place-items: center; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-weight: 800; font-size: 11px; flex-shrink: 0; }
-      `}</style>
     </div>
   )
 }

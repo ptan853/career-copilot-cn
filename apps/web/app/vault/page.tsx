@@ -5,6 +5,7 @@ import {
   createSource,
   uploadSource as uploadSourceFile,
   getGroupedEvents,
+  createEvent,
   updateEvent,
   confirmEvent,
   deleteEvent,
@@ -89,6 +90,22 @@ export default function VaultPage() {
   const [eventForm, setEventForm] = useState<EventForm | null>(null)
   const [claims, setClaims] = useState<VaultClaim[]>([])
   const [newClaimText, setNewClaimText] = useState('')
+  const [showNewEventModal, setShowNewEventModal] = useState(false)
+  const [newEventForm, setNewEventForm] = useState<EventForm>({
+    title: '',
+    event_type: 'work',
+    role: '',
+    organization: '',
+    location: '',
+    time_start: '',
+    time_end: '',
+    time_precision: 'month',
+    description: '',
+    visibility: 'private',
+    status: 'draft',
+    tags_text: '',
+    details: { ...EMPTY_DETAILS },
+  })
   const fileRef = useRef<HTMLInputElement>(null)
 
   async function loadSections() {
@@ -193,6 +210,47 @@ export default function VaultPage() {
     setActiveEvent(null)
     setEventForm(null)
     await loadSections()
+  }
+
+  async function createNewEvent() {
+    if (!newEventForm.title.trim()) {
+      setStatusMessage('请至少填写事件标题')
+      return
+    }
+    try {
+      await createEvent({
+        event_type: newEventForm.event_type,
+        title: newEventForm.title.trim(),
+        role: newEventForm.role || undefined,
+        organization: newEventForm.organization || undefined,
+        location: newEventForm.location || undefined,
+        time_start: newEventForm.time_start || undefined,
+        time_end: newEventForm.time_end || undefined,
+        description: newEventForm.description || undefined,
+        details_json: newEventForm.details,
+        tags: splitTags(newEventForm.tags_text),
+      })
+      setStatusMessage('事件已创建')
+      setShowNewEventModal(false)
+      setNewEventForm({
+        title: '',
+        event_type: 'work',
+        role: '',
+        organization: '',
+        location: '',
+        time_start: '',
+        time_end: '',
+        time_precision: 'month',
+        description: '',
+        visibility: 'private',
+        status: 'draft',
+        tags_text: '',
+        details: { ...EMPTY_DETAILS },
+      })
+      await loadSections()
+    } catch {
+      setStatusMessage('创建失败，请检查登录状态或 API 设置')
+    }
   }
 
   async function addClaim() {
@@ -309,6 +367,15 @@ export default function VaultPage() {
             ))}
           </div>
         )}
+
+        {!loading && (
+          <div className="manual-add-area">
+            <button className="manual-add-btn" onClick={() => setShowNewEventModal(true)}>
+              手动新增经历
+            </button>
+            <p>也可以不依赖 AI，直接手动填写工作、项目、教育等类型的事件。</p>
+          </div>
+        )}
       </section>
 
       {activeEvent && eventForm && (
@@ -362,6 +429,44 @@ export default function VaultPage() {
               <button onClick={deleteActiveEvent} className="danger">删除事件</button>
               <button onClick={saveEvent}>保存修改</button>
               <button onClick={confirmActiveEvent} className="primary">确认入库</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showNewEventModal && (
+        <div className="modal-backdrop" onClick={() => setShowNewEventModal(false)}>
+          <div className="event-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <p className="eyebrow">手动新增经历</p>
+                <h2>新建事件</h2>
+              </div>
+              <button onClick={() => setShowNewEventModal(false)}>关闭</button>
+            </div>
+
+            <div className="modal-grid">
+              <label>标题<input value={newEventForm.title} onChange={(event) => setNewEventForm({ ...newEventForm, title: event.target.value })} placeholder="例如：增长产品实习" /></label>
+              <label>类型<select value={newEventForm.event_type} onChange={(event) => setNewEventForm({ ...newEventForm, event_type: event.target.value })}>{EVENT_TYPE_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+              <label>角色<input value={newEventForm.role} onChange={(event) => setNewEventForm({ ...newEventForm, role: event.target.value })} placeholder="例如：产品实习生" /></label>
+              <label>组织<input value={newEventForm.organization} onChange={(event) => setNewEventForm({ ...newEventForm, organization: event.target.value })} placeholder="例如：字节跳动" /></label>
+              <label>地点<input value={newEventForm.location} onChange={(event) => setNewEventForm({ ...newEventForm, location: event.target.value })} placeholder="例如：北京" /></label>
+              <label>开始时间<input value={newEventForm.time_start} onChange={(event) => setNewEventForm({ ...newEventForm, time_start: event.target.value })} placeholder="2024-06" /></label>
+              <label>结束时间<input value={newEventForm.time_end} onChange={(event) => setNewEventForm({ ...newEventForm, time_end: event.target.value })} placeholder="2025-03" /></label>
+              <label>标签<input value={newEventForm.tags_text} onChange={(event) => setNewEventForm({ ...newEventForm, tags_text: event.target.value })} placeholder="增长, A/B 测试" /></label>
+            </div>
+
+            <label className="modal-field">描述<textarea value={newEventForm.description} onChange={(event) => setNewEventForm({ ...newEventForm, description: event.target.value })} placeholder="简要描述这段经历..." /></label>
+            <div className="detail-grid">
+              <label>背景<textarea value={newEventForm.details.context} onChange={(event) => setNewEventForm({ ...newEventForm, details: { ...newEventForm.details, context: event.target.value } })} placeholder="这段经历的背景是什么？" /></label>
+              <label>个人贡献<textarea value={newEventForm.details.contribution} onChange={(event) => setNewEventForm({ ...newEventForm, details: { ...newEventForm.details, contribution: event.target.value } })} placeholder="你的具体贡献是什么？" /></label>
+              <label>实现方法<textarea value={newEventForm.details.implementation} onChange={(event) => setNewEventForm({ ...newEventForm, details: { ...newEventForm.details, implementation: event.target.value } })} placeholder="采用了什么方法或技术？" /></label>
+              <label>结果<textarea value={newEventForm.details.outcome} onChange={(event) => setNewEventForm({ ...newEventForm, details: { ...newEventForm.details, outcome: event.target.value } })} placeholder="带来了什么可量化的结果？" /></label>
+            </div>
+
+            <div className="modal-actions">
+              <button onClick={() => setShowNewEventModal(false)}>取消</button>
+              <button onClick={createNewEvent} className="primary">创建事件</button>
             </div>
           </div>
         </div>

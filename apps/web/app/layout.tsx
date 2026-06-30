@@ -3,8 +3,8 @@ import type { Metadata } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'Career Copilot CN',
-  description: 'Evidence-first job application OS',
+  title: '求索 Copilot',
+  description: '让每一段经历，都成为下一次机会的证据',
 }
 
 export default function RootLayout({

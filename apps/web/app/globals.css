@@ -513,3 +513,35 @@ body {
     flex-direction: column;
   }
 }
+
+.manual-add-area {
+  margin-top: 28px;
+  padding-top: 24px;
+  border-top: 2px dashed var(--app-line);
+  text-align: center;
+}
+
+.manual-add-btn {
+  border: 2px dashed #b0b9c6;
+  border-radius: 999px;
+  background: #f7fbfa;
+  color: var(--app-blue-ink);
+  cursor: pointer;
+  font-weight: 900;
+  font-size: 14px;
+  min-height: 42px;
+  padding: 0 24px;
+  transition: background .16s ease, border-color .16s ease;
+}
+
+.manual-add-btn:hover {
+  background: #eef7ff;
+  border-color: var(--app-blue);
+}
+
+.manual-add-area p {
+  margin-top: 10px;
+  color: var(--app-muted);
+  font-size: 13px;
+  font-weight: 700;
+}

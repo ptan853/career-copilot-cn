@@ -1,74 +1,108 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
+import { getJobs, getEvidenceMap, generateArtifact, getArtifact } from '@/lib/api-client'
 
-const DOC_TYPES = [
-  { id: 'resume', label: 'Resume', sub: '1-page tailored', active: true },
-  { id: 'cover', label: 'Cover Letter', sub: '', active: false },
-  { id: 'boss', label: 'Boss Opening', sub: '', active: false },
-  { id: 'referral', label: 'Referral Q&A', sub: '', active: false },
-]
-
-const SECTIONS = [
-  { id: 'contact', label: 'Contact', checked: true },
-  { id: 'summary', label: 'Summary', checked: true },
-  { id: 'experience', label: 'Work Experience', checked: true },
-  { id: 'projects', label: 'Projects', checked: true },
-  { id: 'skills', label: 'Skills', checked: true },
-  { id: 'courses', label: 'Courses', checked: false },
-  { id: 'awards', label: 'Awards', checked: false },
-]
-
-const PLAN_STEPS = [
-  { label: '1. Positioning', desc: 'Agent infrastructure engineer', active: true },
-  { label: '2. Evidence', desc: '3 events selected', active: true },
-  { label: '3. Draft', desc: 'Not generated', active: false },
-  { label: '4. Edit', desc: 'Editor', active: false },
-  { label: '5. Export', desc: 'PDF verified', active: false },
-]
-
-const EVENT_PLAN = [
-  { section: 'Experience', event: 'PM Agent', use: 'Lead with tool orchestration' },
-  { section: 'Experience', event: 'Storage optimization', use: 'Service and production delivery' },
-  { section: 'Projects', event: 'Career Vault Skill', use: 'Memory, schema, evidence model' },
+const SECTIONS_ALL = [
+  { id: 'contact', label: '联系方式' },
+  { id: 'summary', label: '个人简介' },
+  { id: 'experience', label: '工作经历' },
+  { id: 'projects', label: '项目经历' },
+  { id: 'skills', label: '技能' },
+  { id: 'courses', label: '课程' },
+  { id: 'awards', label: '奖项' },
 ]
 
 export default function GeneratePage() {
+  const [jobs, setJobs] = useState<any[]>([])
+  const [selectedJobId, setSelectedJobId] = useState('')
+  const [evidenceMap, setEvidenceMap] = useState<any>(null)
   const [docType, setDocType] = useState('resume')
-  const [target, setTarget] = useState('deepseek')
-  const [language, setLanguage] = useState('chinese')
-  const [template, setTemplate] = useState('ats')
+  const [language, setLanguage] = useState('zh-CN')
+  const [template, setTemplate] = useState('ats_classic')
   const [strictness, setStrictness] = useState('confirmed')
-  const [checked, setChecked] = useState(SECTIONS.filter(s => s.checked).map(s => s.id))
+  const [checked, setChecked] = useState(['contact', 'summary', 'experience', 'projects', 'skills'])
+  const [loading, setLoading] = useState(true)
+  const [generating, setGenerating] = useState(false)
+  const [result, setResult] = useState<any>(null)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    getJobs().then((r: any) => setJobs(r.data || [])).catch(() => {}).finally(() => setLoading(false))
+  }, [])
+
+  const loadEvidenceMap = useCallback(async (jobId: string) => {
+    if (!jobId) return
+    try {
+      const res: any = await getEvidenceMap(jobId)
+      setEvidenceMap(res.data)
+    } catch { setEvidenceMap(null) }
+  }, [])
+
+  useEffect(() => {
+    if (selectedJobId) loadEvidenceMap(selectedJobId)
+  }, [selectedJobId, loadEvidenceMap])
 
   const toggle = (id: string) => {
     setChecked(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
   }
+
+  const handleGenerate = async () => {
+    if (!selectedJobId) { setError('请先选择目标岗位'); return }
+    setGenerating(true)
+    setError('')
+    setResult(null)
+    try {
+      const res: any = await generateArtifact({
+        job_target_id: selectedJobId,
+        doc_type: docType,
+        language,
+        template,
+        sections: checked,
+        evidence_strictness: strictness,
+      })
+      setResult(res.data)
+    } catch (e: any) {
+      setError(e.message || '生成失败')
+    } finally { setGenerating(false) }
+  }
+
+  const selectedJob = jobs.find(j => j.id === selectedJobId)
+  const hasEvidence = evidenceMap && (evidenceMap.selected_event_ids || []).length > 0
+  const currentVersion = result?.current_version
+  const structured = currentVersion?.structured_json || {}
 
   return (
     <div>
       <div className="flex items-start justify-between gap-5 mb-5">
         <div>
           <h1 className="text-[28px] font-bold tracking-normal leading-tight">生成</h1>
-          <p className="text-[13px] text-app-muted mt-1.5">Generate from an approved plan, not from a blind prompt.</p>
+          <p className="text-[13px] text-app-muted mt-1.5">从已确认的证据出发生成文档，而非靠直觉拼凑。</p>
         </div>
-        <button className="btn primary">Generate resume</button>
+        <button className="btn primary" onClick={handleGenerate} disabled={generating || !selectedJobId}>
+          {generating ? '生成中...' : '生成文档'}
+        </button>
       </div>
 
       <div className="grid grid-cols-[360px_1fr] gap-4 items-start">
         {/* Left column */}
         <div className="space-y-3">
           {/* Document type */}
-          <div className="bg-white border border-app-line rounded-lg">
+          <div className="app-card">
             <div className="px-4 py-3.5 border-b border-app-line">
-              <h2 className="text-[17px] font-semibold">Document type</h2>
+              <h2 className="text-[17px] font-semibold">文档类型</h2>
             </div>
             <div className="p-4 grid grid-cols-2 gap-2">
-              {DOC_TYPES.map(d => (
+              {[
+                { id: 'resume', label: '简历', sub: '单页定制' },
+                { id: 'cover_letter', label: '求职信', sub: '' },
+                { id: 'boss_opening', label: 'BOSS 打招呼', sub: '' },
+                { id: 'referral_qa', label: '内推问答', sub: '' },
+              ].map(d => (
                 <button
                   key={d.id}
                   onClick={() => setDocType(d.id)}
-                  className={'h-16 border rounded-md flex flex-col items-center justify-center font-semibold text-sm transition-all ' +
+                  className={'h-16 border rounded-[14px] flex flex-col items-center justify-center font-semibold text-sm transition-all ' +
                     (docType === d.id ? 'bg-app-blue text-white border-app-blue' : 'bg-white border-app-line text-app-ink hover:border-app-blue')}
                 >
                   {d.label}
@@ -79,154 +113,189 @@ export default function GeneratePage() {
           </div>
 
           {/* Controls */}
-          <div className="bg-white border border-app-line rounded-lg">
+          <div className="app-card">
             <div className="px-4 py-3.5 border-b border-app-line">
-              <h2 className="text-[17px] font-semibold">Controls</h2>
+              <h2 className="text-[17px] font-semibold">生成参数</h2>
             </div>
             <div className="p-4 space-y-3">
               <label className="flex flex-col gap-1.5">
-                <span className="text-xs text-app-muted font-semibold">Target</span>
-                <select value={target} onChange={e => setTarget(e.target.value)} className="input h-[34px] text-sm">
-                  <option value="deepseek">DeepSeek Harness Team</option>
-                  <option value="kuaishou">Kuaishou AI</option>
-                </select>
+                <span className="text-xs text-app-muted font-semibold">目标岗位</span>
+                {loading ? (
+                  <p className="text-xs text-app-muted">加载岗位列表...</p>
+                ) : jobs.length === 0 ? (
+                  <p className="text-xs text-app-muted">暂无岗位，请先添加</p>
+                ) : (
+                  <select value={selectedJobId} onChange={e => setSelectedJobId(e.target.value)} className="input h-[34px] text-sm">
+                    <option value="">选择岗位...</option>
+                    {jobs.map(j => (
+                      <option key={j.id} value={j.id}>{[j.company, j.role].filter(Boolean).join(' · ') || '未命名岗位'}</option>
+                    ))}
+                  </select>
+                )}
               </label>
               <label className="flex flex-col gap-1.5">
-                <span className="text-xs text-app-muted font-semibold">Language</span>
+                <span className="text-xs text-app-muted font-semibold">语言</span>
                 <select value={language} onChange={e => setLanguage(e.target.value)} className="input h-[34px] text-sm">
-                  <option value="chinese">Chinese resume</option>
-                  <option value="english">English resume</option>
-                  <option value="bilingual">Bilingual</option>
+                  <option value="zh-CN">中文简历</option>
+                  <option value="en-US">英文简历</option>
+                  <option value="bilingual">中英双语</option>
                 </select>
               </label>
               <label className="flex flex-col gap-1.5">
-                <span className="text-xs text-app-muted font-semibold">Template</span>
+                <span className="text-xs text-app-muted font-semibold">模板</span>
                 <select value={template} onChange={e => setTemplate(e.target.value)} className="input h-[34px] text-sm">
-                  <option value="ats">ATS Classic</option>
-                  <option value="modern">Engineer Modern</option>
+                  <option value="ats_classic">ATS 经典</option>
+                  <option value="modern">工程师现代</option>
                 </select>
               </label>
               <label className="flex flex-col gap-1.5">
-                <span className="text-xs text-app-muted font-semibold">Evidence strictness</span>
+                <span className="text-xs text-app-muted font-semibold">证据严格度</span>
                 <select value={strictness} onChange={e => setStrictness(e.target.value)} className="input h-[34px] text-sm">
-                  <option value="confirmed">Confirmed only</option>
-                  <option value="allow_weak">Allow reviewed weak claims</option>
+                  <option value="confirmed">仅已确认</option>
+                  <option value="allow_weak">允许弱证据</option>
                 </select>
               </label>
             </div>
           </div>
 
           {/* Sections */}
-          <div className="bg-white border border-app-line rounded-lg">
+          <div className="app-card">
             <div className="px-4 py-3.5 border-b border-app-line flex items-center justify-between">
-              <h2 className="text-[17px] font-semibold">Sections</h2>
-              <span className="badge-blue">1-3 YoE preset</span>
+              <h2 className="text-[17px] font-semibold">简历板块</h2>
             </div>
             <div className="p-4 space-y-2.5">
-              {SECTIONS.map(s => (
+              {SECTIONS_ALL.map(s => (
                 <label key={s.id} className="flex items-center gap-2.5 cursor-pointer text-sm">
                   <input
                     type="checkbox"
                     checked={checked.includes(s.id)}
                     onChange={() => toggle(s.id)}
-                    className="w-4 h-4 rounded border-app-line accent-app-blue"
                   />
                   {s.label}
                 </label>
               ))}
             </div>
           </div>
+
+          {/* Evidence status */}
+          {selectedJobId && (
+            <div className="app-card p-4">
+              <h3 className="text-xs font-extrabold text-app-muted uppercase tracking-wider mb-2">证据状态</h3>
+              {evidenceMap === undefined ? (
+                <p className="text-xs text-app-muted">加载中...</p>
+              ) : !evidenceMap ? (
+                <div>
+                  <p className="text-xs text-app-muted">尚未执行证据映射</p>
+                  <p className="text-xs text-app-muted mt-1">建议先在证据映射页完成匹配后再生成。</p>
+                </div>
+              ) : (
+                <div className="space-y-1 text-xs">
+                  <p>已选事件: <strong className="text-app-green">{evidenceMap.selected_event_ids?.length || 0}</strong></p>
+                  <p>证据缺口: <strong className="text-app-amber">{Object.keys(evidenceMap.gaps || {}).length}</strong></p>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
-        {/* Right column — Resume plan preview */}
-        <div className="bg-white border border-app-line rounded-lg">
+        {/* Right column — Plan preview */}
+        <div className="app-card">
           <div className="px-4 py-3.5 border-b border-app-line flex items-center justify-between">
-            <h2 className="text-[17px] font-semibold">Resume plan preview</h2>
-            <span className="badge-amber">Approval required</span>
+            <h2 className="text-[17px] font-semibold">生成预览</h2>
+            {result && <span className="badge-green">已生成</span>}
           </div>
           <div className="p-4 space-y-4">
-            {/* Flow steps */}
-            <div className="flex gap-1.5">
-              {PLAN_STEPS.map((step, i) => (
-                <div
-                  key={i}
-                  className={`flex-1 p-2.5 rounded-md text-center border transition-colors ${
-                    step.active ? 'bg-[#f0f5ff] border-app-blue/40' : 'bg-[#fbfcfe] border-app-line-soft opacity-50'
-                  }`}
-                >
-                  <h3 className="text-xs font-extrabold">{step.label}</h3>
-                  <p className="text-[11px] text-app-muted mt-0.5">{step.desc}</p>
+            {!result && !generating && (
+              <div className="rounded-[20px] border border-dashed border-app-line bg-app-panel-soft p-8 text-center">
+                <p className="text-sm font-black">选择岗位后点击"生成文档"</p>
+                <p className="mt-2 text-xs text-app-muted">系统会基于证据映射自动组装结构化简历内容。</p>
+                {!selectedJobId && (
+                  <p className="mt-3 text-xs text-app-muted">请从左侧选择一个目标岗位。</p>
+                )}
+              </div>
+            )}
+
+            {generating && (
+              <div className="rounded-[20px] border border-dashed border-app-line bg-app-panel-soft p-8 text-center">
+                <p className="text-sm font-black">正在生成...</p>
+                <p className="mt-2 text-xs text-app-muted">从证据映射中提取已选中事件和声明。</p>
+              </div>
+            )}
+
+            {error && (
+              <div className="rounded-[16px] bg-[#fdecec] p-4 text-sm text-app-red">{error}</div>
+            )}
+
+            {result && (
+              <>
+                {/* Meta */}
+                <div className="flex gap-3 text-sm">
+                  <div><span className="text-xs text-app-muted">标题</span><p className="font-semibold">{result.title}</p></div>
+                  <div><span className="text-xs text-app-muted">模板</span><p>{result.template}</p></div>
+                  <div><span className="text-xs text-app-muted">语言</span><p>{result.language}</p></div>
                 </div>
-              ))}
-            </div>
 
-            {/* Positioning */}
-            <div className="p-3.5 rounded-md bg-app-panel-soft border border-app-line-soft">
-              <h3 className="text-sm font-semibold">Positioning</h3>
-              <p className="text-sm mt-2">Position Peifeng as an early-career Agent infrastructure engineer with hands-on tool orchestration, context management, service integration, and safety boundary experience.</p>
-            </div>
+                <div className="h-px bg-app-line-soft" />
 
-            {/* Selected + Risks */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="p-3.5 rounded-md bg-white border border-app-line-soft">
-                <h3 className="text-xs font-extrabold text-app-muted uppercase tracking-wider mb-2">Selected sections</h3>
+                {/* Summary */}
+                {structured.summary && (
+                  <div className="p-3.5 rounded-[16px] bg-app-panel-soft">
+                    <h3 className="text-xs font-extrabold text-app-muted uppercase tracking-wider mb-2">个人简介</h3>
+                    <p className="text-sm">{structured.summary}</p>
+                  </div>
+                )}
+
+                {/* Selected sections */}
                 <div className="flex gap-1.5 flex-wrap">
                   {checked.map(id => {
-                    const sec = SECTIONS.find(s => s.id === id)
+                    const sec = SECTIONS_ALL.find(s => s.id === id)
                     return sec ? <span key={id} className="badge-blue">{sec.label}</span> : null
                   })}
                 </div>
-              </div>
-              <div className="p-3.5 rounded-md bg-white border border-app-line-soft">
-                <h3 className="text-xs font-extrabold text-app-muted uppercase tracking-wider mb-2">Risks</h3>
-                <div className="flex gap-1.5 flex-wrap">
-                  <span className="badge-amber">Agent evaluation weak</span>
-                  <span className="badge-amber">Page budget tight</span>
-                </div>
-              </div>
-            </div>
 
-            {/* Events table */}
-            <div className="p-3.5 rounded-md bg-white border border-app-line-soft">
-              <h3 className="text-xs font-extrabold text-app-muted uppercase tracking-wider mb-2">Events to use</h3>
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-app-line-soft">
-                    <th className="text-left py-2 text-xs text-app-muted font-extrabold uppercase">Section</th>
-                    <th className="text-left py-2 text-xs text-app-muted font-extrabold uppercase">Event</th>
-                    <th className="text-left py-2 text-xs text-app-muted font-extrabold uppercase">Use</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {EVENT_PLAN.map((row, i) => (
-                    <tr key={i} className="border-b border-app-line-soft last:border-0">
-                      <td className="py-2 pr-3 text-sm">{row.section}</td>
-                      <td className="py-2 pr-3 text-sm font-semibold">{row.event}</td>
-                      <td className="py-2 text-sm text-app-muted">{row.use}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                {/* Experience */}
+                {(structured.experience || []).length > 0 && (
+                  <div className="rounded-[16px] bg-white border border-app-line-soft p-3.5">
+                    <h3 className="text-xs font-extrabold text-app-muted uppercase tracking-wider mb-2">
+                      工作经历 ({(structured.experience || []).length} 条)
+                    </h3>
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-app-line-soft">
+                          <th className="text-left py-2 text-xs text-app-muted font-extrabold">事件</th>
+                          <th className="text-left py-2 text-xs text-app-muted font-extrabold">组织</th>
+                          <th className="text-left py-2 text-xs text-app-muted font-extrabold">声明</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {structured.experience.map((row: any, i: number) => (
+                          <tr key={i} className="border-b border-app-line-soft last:border-0">
+                            <td className="py-2 pr-3 text-sm font-semibold">{row.title}</td>
+                            <td className="py-2 pr-3 text-sm text-app-muted">{row.organization || '—'}</td>
+                            <td className="py-2 text-sm text-app-muted">{(row.bullets || []).length} 条</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
 
-            {/* Actions */}
-            <div className="flex justify-end gap-2">
-              <button className="btn">Adjust evidence</button>
-              <button className="btn primary">Approve plan and generate</button>
-            </div>
+                {/* Skills */}
+                {(structured.skills || []).length > 0 && (
+                  <div className="rounded-[16px] bg-white border border-app-line-soft p-3.5">
+                    <h3 className="text-xs font-extrabold text-app-muted uppercase tracking-wider mb-2">技能关键词</h3>
+                    <div className="flex gap-1.5 flex-wrap">
+                      {structured.skills.map((s: string, i: number) => (
+                        <span key={i} className="badge-gray text-[11px]">{s}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         </div>
       </div>
-
-      <style jsx>{`
-        .btn { height: 36px; border: 1px solid #d9dee7; background: #fff; color: #172033; padding: 0 12px; border-radius: 7px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; font-weight: 650; cursor: pointer; white-space: nowrap; font-size: 14px; }
-        .btn.primary { background: #1f5eff; color: #fff; border-color: #1f5eff; }
-        .btn:hover { opacity: 0.9; }
-        .input { border: 1px solid #d9dee7; border-radius: 7px; background: #fff; color: #172033; padding: 8px 11px; font-size: 14px; width: 100%; }
-        .input:focus { outline: none; border-color: #1f5eff; }
-        .badge-amber { background: #fff2dc; color: #b97913; border: 1px solid #ffe1ad; display: inline-flex; align-items: center; gap: 5px; height: 23px; padding: 0 8px; border-radius: 999px; font-size: 12px; font-weight: 700; white-space: nowrap; }
-        .badge-blue { background: #eaf0ff; color: #1741a6; border: 1px solid #d8e3ff; display: inline-flex; align-items: center; gap: 5px; height: 23px; padding: 0 8px; border-radius: 999px; font-size: 12px; font-weight: 700; white-space: nowrap; }
-      `}</style>
     </div>
   )
 }

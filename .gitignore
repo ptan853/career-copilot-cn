@@ -2,8 +2,12 @@ career-copilot-cn/
 node_modules/
 .next/
 __pycache__/
+.pytest_cache/
+.venv/
 *.pyc
 *.db
+*.tsbuildinfo
 .env
 .env.local
 .DS_Store
+.superpowers/

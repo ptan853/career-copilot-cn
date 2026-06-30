@@ -433,3 +433,33 @@ class TestDashboardSummary:
         assert summary["needs_review"] == 0
         assert summary["claim_count"] == 1
         assert summary["vault_readiness_pct"] == 50
+
+
+# ---------------------------------------------------------------------------
+# AI provider settings
+# ---------------------------------------------------------------------------
+
+
+class TestAiProviderSettings:
+    def test_profile_does_not_return_api_key_plaintext(self, session: Session):
+        from models import Profile
+        from routers.vault import serialize_profile
+
+        user = User(display_name="User A", email="a@test.com")
+        session.add(user)
+        session.flush()
+
+        profile = Profile(
+            user_id=user.id,
+            full_name="Alice",
+            ai_provider="openai",
+            ai_api_key="sk-secret-value",
+        )
+        session.add(profile)
+        session.commit()
+
+        data = serialize_profile(profile)
+
+        assert data["ai_provider"] == "openai"
+        assert data["has_ai_api_key"] is True
+        assert "ai_api_key" not in data

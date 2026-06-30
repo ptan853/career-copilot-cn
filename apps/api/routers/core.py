@@ -47,10 +47,6 @@ def build_dashboard_summary(session: Session, user_id: str) -> dict:
         "needs_review": len(needs_review),
         "archived_events": len(archived),
         "claim_count": len(claims),
-        "total_jobs": 0,
-        "total_artifacts": 0,
-        "active_interviews": 0,
-        "applied_count": 0,
     }
 
 

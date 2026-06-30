@@ -52,6 +52,8 @@ async function authFetch<T>(
   path: string,
   options?: RequestInit & { noAuth?: boolean },
 ): Promise<T> {
+  const controller = new AbortController()
+  const timeout = globalThis.setTimeout(() => controller.abort(), 8000)
   const headers: Record<string, string> = {}
   if (!(options?.body instanceof FormData)) {
     headers['Content-Type'] = 'application/json'
@@ -60,10 +62,16 @@ async function authFetch<T>(
   if (token && !options?.noAuth) {
     headers['Authorization'] = `Bearer ${token}`
   }
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers: { ...headers, ...(options?.headers as Record<string, string> || {}) },
-  })
+  let res: Response
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      signal: options?.signal || controller.signal,
+      headers: { ...headers, ...(options?.headers as Record<string, string> || {}) },
+    })
+  } finally {
+    globalThis.clearTimeout(timeout)
+  }
   if (res.status === 401 && !options?.noAuth) {
     clearToken()
   }

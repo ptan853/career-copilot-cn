@@ -112,6 +112,8 @@ export const uploadSource = (file: File) => {
 
 export const getSources = () => fetchAPI('/api/vault/sources')
 
+export const getSource = (id: string) => fetchAPI(`/api/vault/sources/${id}`)
+
 // Vault — Events
 export const createEvent = (data: {
   event_type: string; title: string; role?: string; organization?: string;
@@ -168,7 +170,67 @@ export const deleteClaim = (id: string) =>
 
 // Vault — Review & Readiness
 export const getReviewQueue = () => fetchAPI('/api/vault/review-queue')
+export const batchConfirmEvents = (eventIds: string[]) =>
+  fetchAPI('/api/vault/review-queue/batch-confirm', { method: 'POST', body: JSON.stringify({ event_ids: eventIds }) })
 export const getReadiness = () => fetchAPI('/api/vault/readiness')
 
-// Jobs
+// Jobs — full CRUD
+export const getJobs = (params?: { status?: string; priority?: string; channel?: string }) => {
+  const q = new URLSearchParams()
+  if (params?.status) q.set('status', params.status)
+  if (params?.priority) q.set('priority', params.priority)
+  if (params?.channel) q.set('channel', params.channel)
+  const qs = q.toString()
+  return fetchAPI(`/api/jobs${qs ? `?${qs}` : ''}`)
+}
+
 export const getJob = (id: string) => fetchAPI(`/api/jobs/${id}`)
+
+export const createJob = (data: {
+  company?: string; role?: string; city?: string; work_mode?: string;
+  industry?: string; source_url?: string; channel?: string; raw_jd?: string;
+  deadline?: string; priority?: string; tags?: string[];
+}) => fetchAPI('/api/jobs', { method: 'POST', body: JSON.stringify(data) })
+
+export const updateJob = (id: string, data: Record<string, any>) =>
+  fetchAPI(`/api/jobs/${id}`, { method: 'PATCH', body: JSON.stringify(data) })
+
+export const deleteJob = (id: string) =>
+  fetchAPI(`/api/jobs/${id}`, { method: 'DELETE' })
+
+// Jobs — Evidence Mapping
+export const createEvidenceMap = (jobId: string) =>
+  fetchAPI(`/api/jobs/${jobId}/evidence-map`, { method: 'POST' })
+
+export const getEvidenceMap = (jobId: string) =>
+  fetchAPI(`/api/jobs/${jobId}/evidence-map`)
+
+// Artifacts — Generate + CRUD + Versions
+export const getArtifacts = (params?: { job_target_id?: string; artifact_type?: string }) => {
+  const q = new URLSearchParams()
+  if (params?.job_target_id) q.set('job_target_id', params.job_target_id)
+  if (params?.artifact_type) q.set('artifact_type', params.artifact_type)
+  const qs = q.toString()
+  return fetchAPI(`/api/artifacts${qs ? `?${qs}` : ''}`)
+}
+
+export const getArtifact = (id: string) => fetchAPI(`/api/artifacts/${id}`)
+
+export const generateArtifact = (data: {
+  job_target_id: string; doc_type?: string; language?: string;
+  template?: string; sections?: string[]; evidence_strictness?: string;
+}) => fetchAPI('/api/artifacts/generate', { method: 'POST', body: JSON.stringify(data) })
+
+export const updateArtifact = (id: string, data: Record<string, any>) =>
+  fetchAPI(`/api/artifacts/${id}`, { method: 'PATCH', body: JSON.stringify(data) })
+
+export const deleteArtifact = (id: string) =>
+  fetchAPI(`/api/artifacts/${id}`, { method: 'DELETE' })
+
+export const getArtifactVersions = (artifactId: string) =>
+  fetchAPI(`/api/artifacts/${artifactId}/versions`)
+
+export const saveArtifactVersion = (artifactId: string, data: {
+  structured_json?: Record<string, any>; markdown?: string;
+  html?: string; change_summary?: string;
+}) => fetchAPI(`/api/artifacts/${artifactId}/versions`, { method: 'POST', body: JSON.stringify(data) })

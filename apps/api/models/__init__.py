@@ -73,6 +73,8 @@ class Profile(SQLModel, table=True):
     language_preferences: list = Field(default=["zh-CN"], sa_column=Column(JSON))
     target_roles: list = Field(default=[], sa_column=Column(JSON))
     application_answers_json: dict = Field(default={}, sa_column=Column(JSON))
+    ai_provider: str = "openai"
+    ai_api_key: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 

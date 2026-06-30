@@ -82,9 +82,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           </nav>
 
           <div className="mt-6 flex flex-col items-center gap-3">
-            <button className="grid h-11 w-11 place-items-center rounded-full bg-white text-[#676a74] shadow-sm" aria-label="设置">
+            <Link href="/settings" className="grid h-11 w-11 place-items-center rounded-full bg-white text-[#676a74] shadow-sm" aria-label="设置">
               <Settings size={20} />
-            </button>
+            </Link>
             <button
               className="grid h-11 w-11 place-items-center rounded-full bg-white text-[#676a74] shadow-sm hover:text-app-red"
               onClick={handleLogout}
