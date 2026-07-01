@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the current one-shot Vault AI parser with an internal three-layer pipeline that detects source sections, extracts section-specific events, and skips or merges duplicates while preserving the same simple user experience.
+**Goal:** Replace the current one-shot Vault AI parser with a schema-driven internal three-layer pipeline that detects source sections, extracts section-specific events, skips or merges duplicates, and presents confirmed-event updates as reversible field diffs while preserving the same simple user experience.
 
-**Architecture:** Keep the existing Vault UI and persistence model for the first implementation. Add backend-only pipeline modules for source detection, section extractor prompts, section span grouping, canonical keys, and deterministic duplicate handling. Store intermediate section maps in `SourceMaterial.metadata_json` instead of adding new permanent tables in this iteration.
+**Architecture:** Keep the existing Vault UI and persistence model for the first implementation. Add a `Vault Section Schema Registry` as the source of truth for section fields, prompt field descriptions, output shapes, normalizers, and canonical dedupe keys. Add backend-only pipeline modules for source detection, section extractor prompts, section span grouping, deterministic duplicate handling, and reversible event update patches. Store intermediate section maps in `SourceMaterial.metadata_json` instead of adding new permanent tables in this iteration.
 
 **Tech Stack:** FastAPI, SQLModel, pytest, OpenAI-compatible provider adapter, Next.js Vault UI unchanged except status compatibility if needed.
 
@@ -19,20 +19,26 @@
 - Source detection is per source; event extraction is per section across grouped source spans.
 - Repeated identical input must not create duplicate CareerEvents.
 - Confirmed CareerEvents must not be silently overwritten.
+- Confirmed-event updates must become field-level diff patches that can be accepted, rejected, or reverted.
+- Section prompts must be generated from the section schema registry, not from hand-maintained duplicate field descriptions.
 - Keep existing `CareerEvent`, `SourceMaterial`, `BackgroundJob`, `Evidence`, and `Claim` tables in this iteration.
 
 ---
 
 ## File Structure
 
+- Create `apps/api/services/vault_section_schema.py`
+  - Section schema registry, field meanings, output paths, dedupe fields, and prompt/schema rendering helpers.
 - Create `apps/api/services/vault_pipeline_types.py`
   - Pydantic/dataclass contracts for source detection, section spans, extracted events, and merge decisions.
 - Create `apps/api/services/vault_pipeline_prompts.py`
-  - Prompt builders for layer 1 detection, section extractors, and event pair merge.
+  - Prompt builders for layer 1 detection, schema-driven section extractors, and event pair merge.
 - Create `apps/api/services/vault_pipeline_keys.py`
-  - Canonical key and duplicate matching helpers.
+  - Schema-driven canonical key and duplicate matching helpers.
 - Create `apps/api/services/vault_pipeline.py`
   - Orchestrates source detection, section grouping, section extraction, duplicate handling, and persistence handoff.
+- Create `apps/api/services/vault_event_patches.py`
+  - Field-level diff generation, patch apply, patch reject, and patch revert helpers.
 - Modify `apps/api/services/ai_worker.py`
   - Calls the new pipeline instead of the current one-shot parse path.
 - Modify `apps/api/routers/vault_sources.py`
@@ -41,14 +47,151 @@
   - Keep current normalizer as compatibility fallback and reuse detail normalization.
 - Create `apps/api/tests/test_vault_pipeline_prompts.py`
   - Verifies prompt registry and required section contracts.
+- Create `apps/api/tests/test_vault_section_schema.py`
+  - Verifies schema fields, prompt rendering, output schema, and dedupe fields.
 - Create `apps/api/tests/test_vault_pipeline_keys.py`
   - Verifies canonical keys and duplicate matching.
+- Create `apps/api/tests/test_vault_event_patches.py`
+  - Verifies field diffs, patch apply, reject, and revert behavior.
 - Create `apps/api/tests/test_vault_pipeline.py`
   - Verifies source maps, section grouping, extraction orchestration, and duplicate skip.
 - Modify `apps/api/tests/test_vault_events.py`
   - Add repeated-source regression if needed.
 
 ---
+
+### Task 0: Add Vault Section Schema Registry
+
+**Files:**
+- Create: `apps/api/services/vault_section_schema.py`
+- Test: `apps/api/tests/test_vault_section_schema.py`
+
+**Interfaces:**
+- Produces: `FieldSchema`
+- Produces: `SectionSchema`
+- Produces: `get_section_schema(section_type: str) -> SectionSchema`
+- Produces: `render_section_field_instructions(section_type: str) -> str`
+- Produces: `render_section_output_schema(section_type: str) -> dict`
+- Produces: `get_section_dedupe_fields(section_type: str) -> list[str]`
+
+- [ ] **Step 1: Write schema registry tests**
+
+Create tests:
+
+```python
+from services.vault_section_schema import (
+    get_section_dedupe_fields,
+    get_section_schema,
+    render_section_field_instructions,
+    render_section_output_schema,
+)
+
+
+def test_experience_schema_contains_bullet_meaning_and_dedupe_fields():
+    schema = get_section_schema("experience")
+    field_paths = [field.path for field in schema.fields]
+    assert "title" in field_paths
+    assert "organization" in field_paths
+    assert "details.bullets" in field_paths
+    assert get_section_dedupe_fields("experience") == ["organization", "title", "time_start", "time_end"]
+
+
+def test_course_schema_does_not_use_skills_or_education_honors():
+    instructions = render_section_field_instructions("courses")
+    assert "课程" in instructions
+    assert "不要把课程塞进 education" in instructions
+    assert "details.skills" not in instructions
+
+
+def test_output_schema_is_generated_from_section_fields():
+    output_schema = render_section_output_schema("projects")
+    event_schema = output_schema["events"][0]
+    assert event_schema["details"]["bullets"] == "string[]"
+    assert event_schema["details"]["tech_stack"] == "string[]"
+```
+
+- [ ] **Step 2: Run failing tests**
+
+Run:
+
+```bash
+cd apps/api
+PYTHONPATH=. uv run pytest tests/test_vault_section_schema.py -q
+```
+
+Expected: import failure because the schema file does not exist yet.
+
+- [ ] **Step 3: Implement schema dataclasses**
+
+Create dataclasses:
+
+```python
+@dataclass(frozen=True)
+class FieldSchema:
+    path: str
+    label: str
+    type: str
+    meaning: str
+    required: bool = False
+
+
+@dataclass(frozen=True)
+class SectionSchema:
+    section_type: str
+    title: str
+    description: str
+    event_types: list[str]
+    fields: list[FieldSchema]
+    dedupe_fields: list[str]
+    exclusions: list[str] = field(default_factory=list)
+```
+
+- [ ] **Step 4: Define initial section schemas**
+
+Include these sections:
+
+```python
+profile, summary, experience, projects, education, courses, awards, skills, certifications, research, languages, other
+```
+
+For each section define:
+
+- user-facing title
+- description
+- event types
+- field paths and meanings
+- dedupe fields
+- exclusions where needed
+
+- [ ] **Step 5: Implement rendering helpers**
+
+Implement:
+
+```python
+render_section_field_instructions(section_type)
+render_section_output_schema(section_type)
+get_section_dedupe_fields(section_type)
+```
+
+The rendered field instructions must be suitable for prompt insertion.
+
+- [ ] **Step 6: Run tests**
+
+Run:
+
+```bash
+cd apps/api
+PYTHONPATH=. uv run pytest tests/test_vault_section_schema.py -q
+```
+
+Expected: all tests pass.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add apps/api/services/vault_section_schema.py apps/api/tests/test_vault_section_schema.py
+git commit -m "Add vault section schema registry"
+```
 
 ### Task 1: Add Pipeline Contracts And Prompt Registry
 
@@ -65,6 +208,8 @@
 - Produces: `source_detection_prompt(...) -> list[LLMMessage]`
 - Produces: `section_extraction_prompt(...) -> list[LLMMessage]`
 - Produces: `event_pair_merge_prompt(...) -> list[LLMMessage]`
+- Consumes: `render_section_field_instructions(section_type)`
+- Consumes: `render_section_output_schema(section_type)`
 
 - [ ] **Step 1: Write prompt registry tests**
 
@@ -105,6 +250,7 @@ def test_section_prompt_uses_section_specific_fields():
     assert "title" in joined
     assert "institution" in joined or "organization" in joined
     assert "不要把课程塞进 education" in joined
+    assert "details.skills" not in joined
 
 
 def test_registry_has_initial_sections():
@@ -179,23 +325,30 @@ class EventMergeDecision:
     warnings: list[str] = field(default_factory=list)
 ```
 
-- [ ] **Step 4: Add prompt builders**
+- [ ] **Step 4: Add schema-driven prompt builders**
 
-Create `vault_pipeline_prompts.py` using existing `LLMMessage` from `services.llm_providers`. Implement registry entries for:
+Create `vault_pipeline_prompts.py` using existing `LLMMessage` from `services.llm_providers`. The section prompt must call:
+
+```python
+render_section_field_instructions(section_type)
+render_section_output_schema(section_type)
+```
+
+Keep `SECTION_EXTRACTOR_REGISTRY` as routing metadata, not as duplicate field definitions:
 
 ```python
 SECTION_EXTRACTOR_REGISTRY = {
-    "profile": "...",
-    "summary": "...",
-    "experience": "...",
-    "projects": "...",
-    "education": "...",
-    "courses": "...",
-    "awards": "...",
-    "skills": "...",
-    "certifications": "...",
-    "research": "...",
-    "languages": "...",
+    "profile": "职业档案 Profile 字段抽取器",
+    "summary": "职业摘要抽取器",
+    "experience": "工作/实习经历抽取器",
+    "projects": "项目经历抽取器",
+    "education": "教育经历抽取器",
+    "courses": "课程抽取器",
+    "awards": "荣誉、奖项和竞赛抽取器",
+    "skills": "技能抽取器",
+    "certifications": "证书抽取器",
+    "research": "论文、专利和研究成果抽取器",
+    "languages": "语言能力抽取器",
 }
 ```
 
@@ -572,7 +725,119 @@ git commit -m "Test repeated vault parsing dedupe"
 
 ---
 
-### Task 7: Final Verification
+### Task 7: Add Event Update Diff Patches
+
+**Files:**
+- Create: `apps/api/services/vault_event_patches.py`
+- Test: `apps/api/tests/test_vault_event_patches.py`
+- Modify: `apps/api/services/vault_pipeline.py`
+
+**Interfaces:**
+- Produces: `build_event_diff(before: dict, after: dict) -> list[dict]`
+- Produces: `create_update_patch(event: CareerEvent, proposed: dict, source_ids: list[str], reason: str) -> dict`
+- Produces: `apply_update_patch(event: CareerEvent, patch: dict) -> CareerEvent`
+- Produces: `revert_update_patch(event: CareerEvent, patch: dict) -> CareerEvent`
+
+- [ ] **Step 1: Write field diff tests**
+
+Create tests:
+
+```python
+from services.vault_event_patches import build_event_diff, apply_patch_dict, revert_patch_dict
+
+
+def test_build_event_diff_shows_added_bullet_and_skill():
+    before = {
+        "title": "PM Agent",
+        "details": {"bullets": ["设计 PM Agent。"], "skills": ["LangChain"]},
+    }
+    after = {
+        "title": "PM Agent",
+        "details": {
+            "bullets": ["设计 PM Agent。", "支持项目、任务、人员信息的自然语言查询。"],
+            "skills": ["LangChain", "LangGraph"],
+        },
+    }
+    diff = build_event_diff(before, after)
+    assert {"field": "details.bullets", "change_type": "add", "old_value": None, "new_value": "支持项目、任务、人员信息的自然语言查询。"} in diff
+    assert {"field": "details.skills", "change_type": "add", "old_value": None, "new_value": "LangGraph"} in diff
+
+
+def test_patch_can_be_applied_and_reverted():
+    before = {"title": "PM Agent", "details": {"skills": ["LangChain"]}}
+    after = {"title": "PM Agent", "details": {"skills": ["LangChain", "LangGraph"]}}
+    patch = {"before": before, "after": after, "diff": build_event_diff(before, after)}
+    assert apply_patch_dict(before, patch) == after
+    assert revert_patch_dict(after, patch) == before
+```
+
+- [ ] **Step 2: Run failing tests**
+
+Run:
+
+```bash
+cd apps/api
+PYTHONPATH=. uv run pytest tests/test_vault_event_patches.py -q
+```
+
+Expected: import failure.
+
+- [ ] **Step 3: Implement patch helpers**
+
+Implement helpers in `vault_event_patches.py`:
+
+```python
+def build_event_diff(before: dict, after: dict) -> list[dict]:
+    ...
+
+
+def apply_patch_dict(current: dict, patch: dict) -> dict:
+    return copy.deepcopy(patch["after"])
+
+
+def revert_patch_dict(current: dict, patch: dict) -> dict:
+    return copy.deepcopy(patch["before"])
+```
+
+For first version, diff only needs to support:
+
+- scalar replace
+- string list add/remove for `details.bullets`, `details.skills`, `details.tech_stack`, `tags`
+
+- [ ] **Step 4: Connect patch policy to pipeline**
+
+In `vault_pipeline.py`, when a new extracted event matches an existing confirmed event and changes non-trivial fields:
+
+- create a patch dictionary
+- store it in `existing_event.details_json["pending_patches"]`
+- do not overwrite the confirmed event
+
+When a new extracted event matches a draft event:
+
+- auto-apply low-risk additions
+- store last patch in `details_json["last_applied_patch"]`
+
+- [ ] **Step 5: Run tests**
+
+Run:
+
+```bash
+cd apps/api
+PYTHONPATH=. uv run pytest tests/test_vault_event_patches.py tests/test_vault_pipeline.py -q
+```
+
+Expected: all tests pass.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add apps/api/services/vault_event_patches.py apps/api/services/vault_pipeline.py apps/api/tests/test_vault_event_patches.py apps/api/tests/test_vault_pipeline.py
+git commit -m "Add vault event update patches"
+```
+
+---
+
+### Task 8: Final Verification
 
 **Files:**
 - No required file changes.
@@ -586,7 +851,7 @@ Run:
 
 ```bash
 cd apps/api
-PYTHONPATH=. uv run pytest tests/test_vault_pipeline_prompts.py tests/test_vault_pipeline_keys.py tests/test_vault_pipeline.py tests/test_source_parse.py tests/test_profile_schema.py tests/test_vault_events.py -q --tb=short
+PYTHONPATH=. uv run pytest tests/test_vault_section_schema.py tests/test_vault_pipeline_prompts.py tests/test_vault_pipeline_keys.py tests/test_vault_pipeline.py tests/test_vault_event_patches.py tests/test_source_parse.py tests/test_profile_schema.py tests/test_vault_events.py -q --tb=short
 ```
 
 Expected: all tests pass.
@@ -625,6 +890,6 @@ If no fixes were needed, do not create an empty commit.
 
 ## Self-Review
 
-- Spec coverage: plan covers source splitting, prompt registry, per-source detection, per-section extraction, duplicate keys, worker integration, and repeated-input regression.
+- Spec coverage: plan covers section schema registry, schema-driven prompt generation, source splitting, per-source detection, per-section extraction, duplicate keys, event update diff patches, worker integration, and repeated-input regression.
 - Placeholder scan: no task relies on a placeholder implementation; each task names files, interfaces, test commands, and expected behavior.
-- Type consistency: `SourceDetectionResult`, `SourceSectionSpan`, `SectionExtractionResult`, and key helper names are consistent across tasks.
+- Type consistency: `SectionSchema`, `FieldSchema`, `SourceDetectionResult`, `SourceSectionSpan`, `SectionExtractionResult`, patch helpers, and key helper names are consistent across tasks.

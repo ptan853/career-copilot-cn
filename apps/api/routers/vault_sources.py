@@ -58,27 +58,55 @@ async def create_source(
         raise HTTPException(status_code=400, detail="请提供文字或至少一个链接")
 
     user_uuid = uuid.UUID(str(user_id))
-    title = body.text.strip()[:80] if body.text.strip() else (", ".join(body.urls[:2]))
-    source = SourceMaterial(
-        user_id=user_uuid,
-        source_type="text",
-        title=title or "手动输入",
-        raw_text=body.text,
-        parse_status="uploaded",
-        metadata_json={"input_hint": body.input_hint.strip()} if body.input_hint.strip() else {},
-    )
-    session.add(source)
+    instruction = body.input_hint.strip()
+    sources: list[SourceMaterial] = []
+
+    if body.text.strip():
+        text = body.text.strip()
+        sources.append(SourceMaterial(
+            user_id=user_uuid,
+            source_type="text",
+            title=text[:80] or "手动输入",
+            raw_text=text,
+            parse_status="uploaded",
+            metadata_json={"input_hint": instruction} if instruction else {},
+        ))
+
+    for url in body.urls:
+        cleaned_url = url.strip()
+        if not cleaned_url:
+            continue
+        sources.append(SourceMaterial(
+            user_id=user_uuid,
+            source_type="url",
+            title=cleaned_url,
+            source_url=cleaned_url,
+            raw_text=cleaned_url,
+            parse_status="uploaded",
+            metadata_json={"input_hint": instruction, "participate_in_parse": True} if instruction else {"participate_in_parse": True},
+        ))
+
+    if not sources:
+        raise HTTPException(status_code=400, detail="请提供文字或至少一个有效链接")
+
+    for source in sources:
+        session.add(source)
     session.commit()
-    session.refresh(source)
+    for source in sources:
+        session.refresh(source)
+
+    parse_batch_id = str(uuid.uuid4())
+    source_ids = [str(source.id) for source in sources]
 
     job = BackgroundJob(
         user_id=user_uuid,
         job_type="source_parse",
         payload={
-            "source_id": str(source.id),
-            "text": body.text,
-            "urls": body.urls,
-            "input_hint": body.input_hint,
+            "parse_batch_id": parse_batch_id,
+            "source_ids": source_ids,
+            "source_id": source_ids[0],
+            "instruction": instruction,
+            "input_hint": instruction,
         },
         status="queued",
     )
@@ -88,10 +116,11 @@ async def create_source(
     _schedule_source_parse(background_tasks)
 
     return {
-        "source_id": str(source.id),
+        "source_id": source_ids[0],
+        "source_ids": source_ids,
         "job_id": str(job.id),
-        "title": source.title,
-        "status": source.parse_status,
+        "title": sources[0].title,
+        "status": sources[0].parse_status,
     }
 
 
