@@ -1,11 +1,11 @@
 from fastapi.testclient import TestClient
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 import uuid
 
 from auth_deps import get_current_user_id
 from database import get_session
 from main import app
-from models import SourceMaterial, User
+from models import BackgroundJob, SourceMaterial, User
 from services.ingestion import IngestedDocument
 
 
@@ -76,3 +76,45 @@ def test_schedule_source_parse_registers_background_worker(monkeypatch):
 
     assert len(scheduled) == 1
     assert scheduled[0] is vault_sources._run_source_parse_worker_once
+
+
+def test_create_source_splits_text_and_urls_into_batch_sources(monkeypatch, tmp_path):
+    from routers import vault_sources
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'vault_source_batch.db'}", echo=False)
+    SQLModel.metadata.create_all(engine)
+    monkeypatch.setattr(vault_sources, "_schedule_source_parse", lambda background_tasks: None)
+
+    with Session(engine) as session:
+        user = User(display_name="Batch User", email="batch@example.com")
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+
+        client = _client_for_user(user, session)
+        try:
+            response = client.post(
+                "/api/vault/sources",
+                json={
+                    "text": "我做过 PM Agent 项目。",
+                    "urls": ["https://github.com/ptan853/career-timeline", "https://example.com/portfolio"],
+                    "input_hint": "重点解析项目和链接",
+                },
+            )
+        finally:
+            app.dependency_overrides.clear()
+
+        assert response.status_code == 200
+        body = response.json()
+        assert len(body["source_ids"]) == 3
+
+        sources = session.exec(select(SourceMaterial).where(SourceMaterial.user_id == user.id)).all()
+        assert [source.source_type for source in sources] == ["text", "url", "url"]
+        assert sources[0].raw_text == "我做过 PM Agent 项目。"
+        assert sources[1].source_url == "https://github.com/ptan853/career-timeline"
+        assert sources[2].source_url == "https://example.com/portfolio"
+
+        job = session.exec(select(BackgroundJob).where(BackgroundJob.user_id == user.id)).one()
+        assert job.payload["source_ids"] == [str(source.id) for source in sources]
+        assert job.payload["instruction"] == "重点解析项目和链接"
+        assert "parse_batch_id" in job.payload
