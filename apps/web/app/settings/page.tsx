@@ -178,17 +178,22 @@ export default function SettingsPage() {
         <p className="text-[13px] text-app-muted mt-1.5">管理你的账号信息和求职偏好。</p>
       </div>
 
-      <div className="grid gap-5 max-w-[720px]">
-        {message && (
-          <div className={`rounded-[16px] border px-4 py-3 text-sm font-bold ${
-            message.type === 'success'
-              ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-              : 'border-red-200 bg-red-50 text-red-700'
+      {message && (
+        <div className={`fixed right-6 top-6 z-50 flex items-center gap-3 rounded-[18px] border px-4 py-3 text-sm font-bold shadow-[0_18px_60px_rgba(15,23,42,0.18)] transition-all ${
+          message.type === 'success'
+            ? 'border-emerald-200 bg-white text-emerald-700'
+            : 'border-red-200 bg-white text-red-700'
+        }`}>
+          <span className={`grid h-7 w-7 place-items-center rounded-full text-white ${
+            message.type === 'success' ? 'bg-emerald-500' : 'bg-red-500'
           }`}>
-            {message.text}
-          </div>
-        )}
+            {message.type === 'success' ? '✓' : '!'}
+          </span>
+          {message.text}
+        </div>
+      )}
 
+      <div className="grid gap-5 max-w-[720px]">
         {/* Account info */}
         <div className="app-card p-5">
           <h2 className="text-xl font-black mb-4">账号信息</h2>

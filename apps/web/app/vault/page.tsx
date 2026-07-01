@@ -60,6 +60,7 @@ type SourceItem = {
   source_type: string
   parse_status: string
   raw_text_preview?: string
+  parse_error?: string | null
   created_at: string
 }
 
@@ -105,8 +106,8 @@ function formatFileSize(bytes: number) {
 
 function sourceStatusLabel(status: string) {
   if (status === 'parsed') return '已解析'
-  if (status === 'extracted') return '已提取'
-  if (status === 'extracting') return '解析中'
+  if (status === 'extracted') return '已提取，等待 AI'
+  if (status === 'extracting') return 'AI 解析中'
   if (status === 'failed') return '失败'
   return '队列中'
 }
@@ -167,7 +168,11 @@ export default function VaultPage() {
         summaries.slice(0, 8).map(async (source) => {
           try {
             const detail: any = await getSource(source.id)
-            return { ...source, raw_text_preview: detail.data?.raw_text_preview || source.raw_text_preview || '' }
+            return {
+              ...source,
+              raw_text_preview: detail.data?.raw_text_preview || source.raw_text_preview || '',
+              parse_error: detail.data?.parse_error || source.parse_error || null,
+            }
           } catch {
             return source
           }
@@ -184,8 +189,12 @@ export default function VaultPage() {
   useEffect(() => {
     loadSections()
     loadSources()
-    const timer = window.setInterval(loadSections, 5000)
-    return () => window.clearInterval(timer)
+    const sectionTimer = window.setInterval(loadSections, 5000)
+    const sourceTimer = window.setInterval(loadSources, 4000)
+    return () => {
+      window.clearInterval(sectionTimer)
+      window.clearInterval(sourceTimer)
+    }
   }, [])
 
   async function submitTextSource(options: { silent?: boolean } = {}) {
@@ -261,7 +270,7 @@ export default function VaultPage() {
         await submitTextSource({ silent: true })
       }
 
-      setStatusMessage('材料已提交，已提取的内容会显示在下方。')
+      setStatusMessage('材料已提交，系统正在解析。下方会自动刷新状态。')
       await loadSources()
       await loadSections()
     } catch (error: any) {
@@ -476,13 +485,16 @@ export default function VaultPage() {
             ))}
 
             {sources.map((source, index) => {
-              const analyzed = source.parse_status === 'extracted' || source.parse_status === 'parsed'
+              const analyzed = source.parse_status === 'parsed'
               return (
-                <div key={source.id} className={`material-row ${analyzed ? 'analyzed' : ''}`}>
+                <div key={source.id} className={`material-row ${analyzed ? 'analyzed' : ''} ${source.parse_status === 'failed' ? 'failed' : ''}`}>
                   <span className="material-index">{pendingFiles.length + index + 1}</span>
                   <div className="material-main">
                     <strong>{source.title}</strong>
-                    <span>{source.source_type === 'file' ? '文件' : '文本'} · {sourceStatusLabel(source.parse_status)}</span>
+                    <span>
+                      {source.source_type === 'file' ? '文件' : '文本'} · {sourceStatusLabel(source.parse_status)}
+                      {source.parse_error ? ` · ${source.parse_error}` : ''}
+                    </span>
                   </div>
                   <em>{sourceStatusLabel(source.parse_status)}</em>
                   <button type="button" onClick={() => removeSource(source)} aria-label="删除材料">
@@ -527,7 +539,11 @@ export default function VaultPage() {
                 <div key={source.id} className="source-list-item">
                   <div>
                     <strong>{source.title}</strong>
-                    <span>{source.raw_text_preview || '已进入队列，等待 AI 生成结构化事件。'}</span>
+                    <span>
+                      {source.parse_error
+                        ? `解析失败：${source.parse_error}`
+                        : source.raw_text_preview || '已进入队列，等待 AI 生成结构化事件。'}
+                    </span>
                   </div>
                   <em>{sourceStatusLabel(source.parse_status)}</em>
                 </div>

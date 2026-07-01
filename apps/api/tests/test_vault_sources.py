@@ -59,3 +59,20 @@ def test_upload_source_uses_ingestion_document_content(monkeypatch, tmp_path):
         assert source.raw_text == "# Parsed Resume\n负责增长实验设计"
         assert source.parse_status == "extracted"
         assert source.metadata_json["extraction_method"] == "markitdown"
+
+
+def test_schedule_source_parse_registers_background_worker(monkeypatch):
+    from routers import vault_sources
+
+    scheduled = []
+
+    class FakeBackgroundTasks:
+        def add_task(self, fn, *args, **kwargs):
+            scheduled.append(fn)
+
+    monkeypatch.setattr(vault_sources, "_run_source_parse_worker_once", lambda: None)
+
+    vault_sources._schedule_source_parse(FakeBackgroundTasks())
+
+    assert len(scheduled) == 1
+    assert scheduled[0] is vault_sources._run_source_parse_worker_once

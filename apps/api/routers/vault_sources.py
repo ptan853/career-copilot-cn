@@ -4,7 +4,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, UploadFile, File, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -34,11 +34,22 @@ class MultiSourceInput(BaseModel):
     input_hint: str = ""
 
 
+def _run_source_parse_worker_once():
+    from services.ai_worker import run_once
+
+    run_once()
+
+
+def _schedule_source_parse(background_tasks: BackgroundTasks):
+    background_tasks.add_task(_run_source_parse_worker_once)
+
+
 # ─── Create source (multi-input) ──────────────────────────────
 
 @router.post("")
 async def create_source(
     body: MultiSourceInput,
+    background_tasks: BackgroundTasks,
     user_id: str = Depends(get_current_user_id),
     session: Session = Depends(get_session),
 ):
@@ -74,6 +85,7 @@ async def create_source(
     session.add(job)
     session.commit()
     session.refresh(job)
+    _schedule_source_parse(background_tasks)
 
     return {
         "source_id": str(source.id),
@@ -87,6 +99,7 @@ async def create_source(
 
 @router.post("/upload")
 async def upload_source(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     user_id: str = Depends(get_current_user_id),
     session: Session = Depends(get_session),
@@ -140,6 +153,7 @@ async def upload_source(
     session.add(job)
     session.commit()
     session.refresh(job)
+    _schedule_source_parse(background_tasks)
 
     return {
         "source_id": str(source.id),
