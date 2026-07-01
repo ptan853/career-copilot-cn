@@ -46,6 +46,7 @@ class UpdateEventBody(BaseModel):
     tags: Optional[list] = None
     visibility: Optional[str] = None
     status: Optional[str] = None
+    patch_updates: Optional[list[dict]] = None
 
 
 @router.post("")
@@ -128,9 +129,14 @@ def update_event(
     if not event or event.user_id != user_uuid:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    update_data = body.model_dump(exclude_none=True)
+    original_details = event.details_json or {}
+    update_data = body.model_dump(exclude_none=True, exclude={"patch_updates"})
     for key, val in update_data.items():
         setattr(event, key, val)
+    if body.patch_updates:
+        if isinstance(event.details_json, dict) and "pending_patches" not in event.details_json and original_details.get("pending_patches"):
+            event.details_json = {**event.details_json, "pending_patches": original_details["pending_patches"]}
+        event.details_json = _apply_patch_status_updates(event.details_json or {}, body.patch_updates)
 
     session.add(event)
     session.commit()
@@ -223,6 +229,7 @@ def _section_for_event(e: CareerEvent) -> dict:
 
 def _serialize_event(e: CareerEvent, session: Session | None = None) -> dict:
     section = _section_for_event(e)
+    pending_patches = _pending_patches(e.details_json or {})
     claims_count = 0
     evidence_count = 0
     if session is not None:
@@ -242,6 +249,9 @@ def _serialize_event(e: CareerEvent, session: Session | None = None) -> dict:
         "time_precision": e.time_precision,
         "description": e.description,
         "details_json": e.details_json,
+        "pending_patches": pending_patches,
+        "pending_patch_count": len(pending_patches),
+        "has_pending_updates": bool(pending_patches),
         "tags": e.tags,
         "status": e.status,
         "visibility": e.visibility,
@@ -252,6 +262,50 @@ def _serialize_event(e: CareerEvent, session: Session | None = None) -> dict:
         "created_at": e.created_at.isoformat(),
         "updated_at": e.updated_at.isoformat(),
     }
+
+
+def _pending_patches(details: dict) -> list[dict]:
+    patches = details.get("pending_patches")
+    if not isinstance(patches, list):
+        return []
+    visible: list[dict] = []
+    for index, patch in enumerate(patches):
+        if not isinstance(patch, dict):
+            continue
+        if patch.get("status", "pending") != "pending":
+            continue
+        patch_copy = dict(patch)
+        patch_copy["id"] = str(patch_copy.get("id") or f"patch_{index}")
+        visible.append(patch_copy)
+    return visible
+
+
+def _apply_patch_status_updates(details: dict, patch_updates: list[dict]) -> dict:
+    next_details = dict(details)
+    patches = next_details.get("pending_patches")
+    if not isinstance(patches, list):
+        return next_details
+
+    statuses_by_id = {
+        str(update.get("id") or update.get("patch_id")): update.get("status")
+        for update in patch_updates
+        if isinstance(update, dict) and (update.get("id") or update.get("patch_id")) and update.get("status") in {"accepted", "rejected"}
+    }
+    if not statuses_by_id:
+        return next_details
+
+    next_patches = []
+    for index, patch in enumerate(patches):
+        if not isinstance(patch, dict):
+            next_patches.append(patch)
+            continue
+        patch_id = str(patch.get("id") or f"patch_{index}")
+        if patch_id in statuses_by_id:
+            next_patches.append({**patch, "id": patch_id, "status": statuses_by_id[patch_id]})
+        else:
+            next_patches.append(patch)
+    next_details["pending_patches"] = next_patches
+    return next_details
 
 
 def _group_events(events: list[dict]) -> list[dict]:

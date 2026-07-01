@@ -52,6 +52,23 @@ export type VaultClaim = {
   visibility?: string
 }
 
+export type VaultPatchDiff = {
+  field: string
+  change_type: string
+  old_value?: any
+  new_value?: any
+}
+
+export type VaultPendingPatch = {
+  id: string
+  status: string
+  reason?: string
+  source_ids?: string[]
+  before?: Record<string, any>
+  after?: Record<string, any>
+  diff?: VaultPatchDiff[]
+}
+
 export type VaultEvent = {
   id: string
   section_type?: string
@@ -66,6 +83,9 @@ export type VaultEvent = {
   time_precision?: string
   description?: string | null
   details_json?: Record<string, any>
+  pending_patches?: VaultPendingPatch[]
+  pending_patch_count?: number
+  has_pending_updates?: boolean
   tags?: string[]
   status: string
   visibility: string

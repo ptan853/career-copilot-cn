@@ -39,6 +39,7 @@ import {
   getProfile,
   updateProfile,
   type VaultEvent,
+  type VaultPendingPatch,
   type VaultSection,
 } from '@/lib/api-client'
 import {
@@ -213,6 +214,8 @@ type EventForm = {
   proficiency: string
 }
 
+type PatchDecision = 'accepted' | 'rejected'
+
 function ModalPortal({ children }: { children: ReactNode }) {
   const [mounted, setMounted] = useState(false)
 
@@ -250,6 +253,31 @@ function eventToForm(event: VaultEvent): EventForm {
     honors_text: getStringList(details.honors).join('，'),
     authors_text: getStringList(details.authors).join('，'),
     proficiency: typeof details.proficiency === 'string' ? details.proficiency : '',
+  }
+}
+
+function applyPendingPatchToForm(form: EventForm, patch: VaultPendingPatch): EventForm {
+  const after = patch.after || {}
+  const details = (after.details || after.details_json || {}) as Record<string, any>
+  return {
+    ...form,
+    title: typeof after.title === 'string' ? after.title : form.title,
+    role: typeof after.role === 'string' ? after.role : form.role,
+    organization: typeof after.organization === 'string' ? after.organization : form.organization,
+    location: typeof after.location === 'string' ? after.location : form.location,
+    time_start: typeof after.time_start === 'string' ? after.time_start : form.time_start,
+    time_end: typeof after.time_end === 'string' ? after.time_end : form.time_end,
+    description: typeof after.description === 'string' ? after.description : form.description,
+    tags_text: Array.isArray(after.tags) ? after.tags.map(String).join('，') : form.tags_text,
+    bullets_text: Array.isArray(details.bullets) ? details.bullets.map(String).join('\n') : form.bullets_text,
+    skills_text: Array.isArray(details.skills) ? details.skills.map(String).join('，') : form.skills_text,
+    tech_stack_text: Array.isArray(details.tech_stack) ? details.tech_stack.map(String).join('，') : form.tech_stack_text,
+    honors_text: Array.isArray(details.honors) ? details.honors.map(String).join('，') : form.honors_text,
+    authors_text: Array.isArray(details.authors) ? details.authors.map(String).join('，') : form.authors_text,
+    url: typeof details.url === 'string' ? details.url : form.url,
+    field: typeof details.field === 'string' ? details.field : form.field,
+    gpa: typeof details.gpa === 'string' ? details.gpa : form.gpa,
+    proficiency: typeof details.proficiency === 'string' ? details.proficiency : form.proficiency,
   }
 }
 
@@ -420,6 +448,7 @@ export default function VaultPage() {
   const [loading, setLoading] = useState(true)
   const [activeEvent, setActiveEvent] = useState<VaultEvent | null>(null)
   const [eventForm, setEventForm] = useState<EventForm | null>(null)
+  const [patchDecisions, setPatchDecisions] = useState<Record<string, PatchDecision>>({})
   const [showNewEventModal, setShowNewEventModal] = useState(false)
   const [showProfileActionsMenu, setShowProfileActionsMenu] = useState(false)
   const [clearingVault, setClearingVault] = useState(false)
@@ -737,6 +766,7 @@ export default function VaultPage() {
       const form = eventToForm(event)
       setActiveEvent(event)
       setEventForm(form)
+      setPatchDecisions({})
     } catch (error) {
       console.error('Failed to open event for editing:', error)
       setStatusMessage('无法打开编辑框，数据格式可能有问题，请刷新后重试。')
@@ -746,6 +776,18 @@ export default function VaultPage() {
   function closeEventModal() {
     setActiveEvent(null)
     setEventForm(null)
+    setPatchDecisions({})
+  }
+
+  function acceptPendingPatch(patch: VaultPendingPatch) {
+    setEventForm((current) => current ? applyPendingPatchToForm(current, patch) : current)
+    setPatchDecisions((current) => ({ ...current, [patch.id]: 'accepted' }))
+    setStatusMessage('更新已应用到编辑表单，保存后正式入库。')
+  }
+
+  function rejectPendingPatch(patch: VaultPendingPatch) {
+    setPatchDecisions((current) => ({ ...current, [patch.id]: 'rejected' }))
+    setStatusMessage('已忽略这次更新，保存后会标记为不合并。')
   }
 
   function openProfileEditor() {
@@ -771,6 +813,7 @@ export default function VaultPage() {
 
   async function saveEvent() {
     if (!activeEvent || !eventForm) return
+    const patchUpdates = Object.entries(patchDecisions).map(([id, status]) => ({ id, status }))
     await updateEvent(activeEvent.id, {
       title: eventForm.title,
       event_type: eventForm.event_type,
@@ -785,8 +828,10 @@ export default function VaultPage() {
       tags: splitTags(eventForm.tags_text),
       visibility: eventForm.visibility,
       status: eventForm.status,
+      ...(patchUpdates.length ? { patch_updates: patchUpdates } : {}),
     })
     setStatusMessage('已保存')
+    setPatchDecisions({})
     await loadSections()
   }
 
@@ -1057,11 +1102,15 @@ export default function VaultPage() {
         <EventModal
           title="编辑档案条目"
           form={eventForm}
+          pendingPatches={activeEvent.pending_patches || []}
+          patchDecisions={patchDecisions}
           onChange={setEventForm}
           onClose={closeEventModal}
           onDelete={deleteActiveEvent}
           onSave={saveEvent}
           onConfirm={activeEvent.status === 'confirmed' ? undefined : confirmActiveEvent}
+          onAcceptPatch={acceptPendingPatch}
+          onRejectPatch={rejectPendingPatch}
         />
       )}
 
@@ -1232,6 +1281,7 @@ function ResumeEvent({ event, onEdit }: { event: VaultEvent; onEdit: () => void 
   const details = event.details_json || {}
   const dateRange = joinDateRange(event.time_start, event.time_end)
   const chips = sectionType === 'projects' ? techStack : skills
+  const pendingUpdateCount = event.pending_patch_count || event.pending_patches?.length || 0
 
   if (sectionType === 'courses') {
     return (
@@ -1239,6 +1289,7 @@ function ResumeEvent({ event, onEdit }: { event: VaultEvent; onEdit: () => void 
         <div>
           <strong>{event.title}</strong>
           {event.organization && <span> — {event.organization}</span>}
+          {pendingUpdateCount > 0 && <em className="resume-update-pill">有更新 {pendingUpdateCount}</em>}
         </div>
         <div className="resume-course-meta">
           {dateRange && <time>{dateRange}</time>}
@@ -1291,28 +1342,126 @@ function ResumeEvent({ event, onEdit }: { event: VaultEvent; onEdit: () => void 
       )}
       <div className="resume-status-row">
         <span className={`status-${event.status}`}>{STATUS_LABELS[event.status] || event.status}</span>
+        {pendingUpdateCount > 0 && <span className="status-update">有更新 {pendingUpdateCount}</span>}
       </div>
     </article>
   )
 }
 
+const PATCH_FIELD_LABELS: Record<string, string> = {
+  title: '标题',
+  role: '角色',
+  organization: '机构/公司',
+  location: '地点',
+  time_start: '开始时间',
+  time_end: '结束时间',
+  description: '描述',
+  tags: '标签',
+  'details.bullets': '简历要点',
+  'details.skills': '技能',
+  'details.tech_stack': '技术栈',
+  'details.honors': '荣誉',
+  'details.authors': '作者/发明人',
+  'details.url': '链接',
+  'details.field': '专业/方向',
+  'details.gpa': 'GPA',
+  'details.proficiency': '熟练度',
+}
+
+function PendingPatchPanel({
+  patches,
+  decisions,
+  onAccept,
+  onReject,
+}: {
+  patches: VaultPendingPatch[]
+  decisions: Record<string, PatchDecision>
+  onAccept?: (patch: VaultPendingPatch) => void
+  onReject?: (patch: VaultPendingPatch) => void
+}) {
+  return (
+    <div className="pending-patch-panel">
+      <div className="pending-patch-head">
+        <div>
+          <span>AI 发现这些内容可能是已有条目的更新</span>
+          <strong>接受后会先写入下方表单，点击保存才正式入库。</strong>
+        </div>
+      </div>
+      <div className="pending-patch-list">
+        {patches.map((patch) => {
+          const decision = decisions[patch.id]
+          return (
+            <div className={`pending-patch-card ${decision ? `is-${decision}` : ''}`} key={patch.id}>
+              <div className="pending-patch-card-head">
+                <div>
+                  <strong>{patch.reason || '补充已有经历'}</strong>
+                  <span>{patch.diff?.length || 0} 处变化</span>
+                </div>
+                <div className="pending-patch-actions">
+                  {decision && <em>{decision === 'accepted' ? '已应用到表单' : '已忽略'}</em>}
+                  <button type="button" disabled={decision === 'accepted'} onClick={() => onAccept?.(patch)}>接受更新</button>
+                  <button type="button" disabled={decision === 'rejected'} onClick={() => onReject?.(patch)}>忽略</button>
+                </div>
+              </div>
+              <div className="pending-patch-diff">
+                {(patch.diff || []).slice(0, 8).map((diff, index) => (
+                  <div className="pending-patch-diff-row" key={`${patch.id}-${diff.field}-${index}`}>
+                    <span>{PATCH_FIELD_LABELS[diff.field] || diff.field}</span>
+                    <div>
+                      {diff.change_type === 'add' ? (
+                        <p><b>新增</b>{formatPatchValue(diff.new_value)}</p>
+                      ) : diff.change_type === 'remove' ? (
+                        <p><b>删除</b>{formatPatchValue(diff.old_value)}</p>
+                      ) : (
+                        <>
+                          <p><b>原来</b>{formatPatchValue(diff.old_value)}</p>
+                          <p><b>更新为</b>{formatPatchValue(diff.new_value)}</p>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function formatPatchValue(value: any) {
+  if (value === null || typeof value === 'undefined' || value === '') return '空'
+  if (Array.isArray(value)) return value.map(String).join('；')
+  if (typeof value === 'object') return JSON.stringify(value)
+  return String(value)
+}
+
 function EventModal({
   title,
   form,
+  pendingPatches = [],
+  patchDecisions = {},
   onChange,
   onClose,
   onDelete,
   onSave,
   onConfirm,
+  onAcceptPatch,
+  onRejectPatch,
   saveLabel = '保存修改',
 }: {
   title: string
   form: EventForm
+  pendingPatches?: VaultPendingPatch[]
+  patchDecisions?: Record<string, PatchDecision>
   onChange: (form: EventForm) => void
   onClose: () => void
   onDelete?: () => void
   onSave: () => void
   onConfirm?: () => void
+  onAcceptPatch?: (patch: VaultPendingPatch) => void
+  onRejectPatch?: (patch: VaultPendingPatch) => void
   saveLabel?: string
 }) {
   const sectionType = getLiteSectionType({
@@ -1365,6 +1514,15 @@ function EventModal({
           </div>
           <button onClick={onClose}>关闭</button>
         </div>
+
+        {pendingPatches.length > 0 && (
+          <PendingPatchPanel
+            patches={pendingPatches}
+            decisions={patchDecisions}
+            onAccept={onAcceptPatch}
+            onReject={onRejectPatch}
+          />
+        )}
 
         <div className="modal-grid">
           {showTypeSelector && <label>类型<select value={form.event_type} onChange={(event) => {

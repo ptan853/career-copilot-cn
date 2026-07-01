@@ -94,6 +94,112 @@ def test_grouped_custom_sections_keep_distinct_titles(tmp_path):
         assert len(sections) == 2
 
 
+def test_events_expose_pending_update_patches(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'event_patches.db'}", echo=False)
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        user = User(email="patches@example.com", display_name="Patch User")
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+
+        event = CareerEvent(
+            user_id=user.id,
+            event_type="project",
+            title="旧项目",
+            status="confirmed",
+            details_json={
+                "section_type": "projects",
+                "pending_patches": [
+                    {
+                        "id": "patch_keep",
+                        "status": "pending",
+                        "reason": "补充项目成果",
+                        "before": {"title": "旧项目", "details": {"bullets": ["旧要点"]}},
+                        "after": {"title": "新项目", "details": {"bullets": ["旧要点", "新增要点"]}},
+                        "diff": [
+                            {
+                                "field": "details.bullets",
+                                "change_type": "add",
+                                "old_value": None,
+                                "new_value": "新增要点",
+                            }
+                        ],
+                    },
+                    {"id": "patch_done", "status": "accepted", "diff": []},
+                ],
+            },
+        )
+        session.add(event)
+        session.commit()
+
+        client = _client_for_user(user, session)
+        try:
+            response = client.get("/api/vault/events")
+        finally:
+            app.dependency_overrides.clear()
+
+        assert response.status_code == 200
+        item = response.json()["data"][0]
+        assert item["has_pending_updates"] is True
+        assert item["pending_patch_count"] == 1
+        assert item["pending_patches"][0]["id"] == "patch_keep"
+        assert item["pending_patches"][0]["diff"][0]["new_value"] == "新增要点"
+
+
+def test_update_event_marks_patch_statuses(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'update_patch_status.db'}", echo=False)
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        user = User(email="patch-save@example.com", display_name="Patch Save User")
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+
+        event = CareerEvent(
+            user_id=user.id,
+            event_type="project",
+            title="旧项目",
+            status="confirmed",
+            details_json={
+                "section_type": "projects",
+                "bullets": ["旧要点"],
+                "pending_patches": [
+                    {
+                        "id": "patch_accept",
+                        "status": "pending",
+                        "diff": [{"field": "title", "change_type": "replace", "old_value": "旧项目", "new_value": "新项目"}],
+                    }
+                ],
+            },
+        )
+        session.add(event)
+        session.commit()
+        session.refresh(event)
+
+        client = _client_for_user(user, session)
+        try:
+            response = client.patch(
+                f"/api/vault/events/{event.id}",
+                json={
+                    "title": "新项目",
+                    "details_json": {"section_type": "projects", "bullets": ["旧要点"]},
+                    "patch_updates": [{"id": "patch_accept", "status": "accepted"}],
+                },
+            )
+        finally:
+            app.dependency_overrides.clear()
+
+        assert response.status_code == 200
+        payload = response.json()["data"]
+        assert payload["title"] == "新项目"
+        assert payload["has_pending_updates"] is False
+        saved = session.get(CareerEvent, event.id)
+        assert saved.details_json["pending_patches"][0]["status"] == "accepted"
+
+
 def test_delete_event_removes_claims_and_evidence(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'delete_event.db'}", echo=False)
     SQLModel.metadata.create_all(engine)

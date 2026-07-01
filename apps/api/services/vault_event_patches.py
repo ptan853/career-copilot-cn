@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import uuid
 from typing import Any
 
 
@@ -36,6 +37,7 @@ def create_update_patch(
     status: str = "pending",
 ) -> dict[str, Any]:
     return {
+        "id": f"patch_{uuid.uuid4().hex[:12]}",
         "patch_type": "update_event",
         "status": status,
         "source_ids": source_ids,
