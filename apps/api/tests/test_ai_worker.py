@@ -1,7 +1,7 @@
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import services.ai_worker as ai_worker
-from models import BackgroundJob, CareerEvent, Claim, Evidence, SourceMaterial, User
+from models import BackgroundJob, CareerEvent, Claim, Evidence, Profile, SourceMaterial, User
 from services.llm_providers import LLMGenerateResult, ProviderConfig, ProviderError, ProviderKind
 
 
@@ -136,6 +136,72 @@ def test_execute_job_persists_events_claims_evidence_and_metadata(monkeypatch, t
         assert event_evidence.locator_json == {"page": 1}
         assert claim_evidence.quote == "负责增长实验设计"
         assert claim_evidence.locator_json == {}
+
+
+def test_execute_job_extracts_contact_info_into_profile(monkeypatch, tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'worker-contact.db'}", echo=False)
+    SQLModel.metadata.create_all(engine)
+    monkeypatch.setattr(ai_worker, "engine", engine)
+
+    with Session(engine) as session:
+        user = User(email="login@example.com", display_name="Contact User")
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+
+        source = SourceMaterial(
+            user_id=user.id,
+            source_type="text",
+            title="简历联系方式",
+            raw_text="谭沛烽\nEmail: tan19991103@outlook.com\n电话：178-0123-1696\n负责增长实验设计",
+            parse_status="uploaded",
+        )
+        session.add(source)
+        session.commit()
+        session.refresh(source)
+
+        job = BackgroundJob(
+            user_id=user.id,
+            job_type="source_parse",
+            payload={"source_id": str(source.id), "text": source.raw_text},
+            status="queued",
+        )
+        session.add(job)
+        session.commit()
+        session.refresh(job)
+
+        monkeypatch.setattr(ai_worker, "DRY_RUN", False)
+        monkeypatch.setattr(
+            ai_worker,
+            "resolve_provider_config",
+            lambda user_id, session: ProviderConfig(
+                kind=ProviderKind.BAILIAN_QWEN,
+                name="bailian-qwen-plus",
+                base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+                api_key="sk-test",
+                model_name="qwen-plus",
+            ),
+        )
+
+        class FakeProvider:
+            def __init__(self, config):
+                self.config = config
+
+            def generate(self, request):
+                return LLMGenerateResult(
+                    provider=self.config.name,
+                    model=self.config.model_name,
+                    text="{}",
+                    json_data={"source_type": "resume", "source_subtype": "resume", "sections": [], "warnings": []},
+                )
+
+        monkeypatch.setattr(ai_worker, "OpenAICompatibleProvider", FakeProvider)
+
+        ai_worker._execute_job(session, job)
+
+        profile = session.exec(select(Profile).where(Profile.user_id == user.id)).one()
+        assert profile.emails == ["tan19991103@outlook.com"]
+        assert profile.phones == ["178-0123-1696"]
 
 
 def test_execute_job_marks_source_failed_when_provider_fails(monkeypatch, tmp_path):

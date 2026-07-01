@@ -19,7 +19,7 @@ import httpx
 from sqlmodel import Session, select
 
 from database import engine
-from models import SourceMaterial, BackgroundJob, CareerEvent, Claim, Evidence
+from models import SourceMaterial, BackgroundJob, CareerEvent, Claim, Evidence, Profile
 from services.ingestion import IngestionError, ingest_url
 from services.llm_providers import LLMGenerateRequest, LLMMessage, OpenAICompatibleProvider, resolve_provider_config
 from services.parse_prompts import source_parse_system_prompt
@@ -38,6 +38,8 @@ DRY_RUN = _dry_run_enabled()
 
 # URL 正则
 URL_PATTERN = re.compile(r'https?://[^\s<>"{}|\\^`\[\]]+')
+EMAIL_PATTERN = re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b')
+PHONE_PATTERN = re.compile(r'(?<!\d)(?:\+?86[-\s]?)?(1[3-9]\d[-\s]?\d{4}[-\s]?\d{4})(?!\d)')
 
 MAX_FETCH_CHARS = 8000  # 每个 URL 最多取 8000 字
 
@@ -73,6 +75,57 @@ def _scan_and_fetch(text: str) -> str:
     if fetched:
         return text + "\n\n===== 网页抓取内容 =====\n" + fetched
     return text
+
+
+def _sync_profile_contact_from_text(session: Session, user_id: uuid.UUID, text: str) -> None:
+    emails = _extract_emails(text)
+    phones = _extract_phones(text)
+    if not emails and not phones:
+        return
+
+    profile = session.exec(select(Profile).where(Profile.user_id == user_id)).first()
+    if not profile:
+        profile = Profile(user_id=user_id)
+
+    profile.emails = _append_unique(profile.emails or [], emails)
+    profile.phones = _append_unique(profile.phones or [], phones)
+    profile.updated_at = datetime.utcnow()
+    session.add(profile)
+    session.commit()
+
+
+def _extract_emails(text: str) -> list[str]:
+    return _dedupe([match.group(0).strip() for match in EMAIL_PATTERN.finditer(text or "")])
+
+
+def _extract_phones(text: str) -> list[str]:
+    phones = []
+    for match in PHONE_PATTERN.finditer(text or ""):
+        phone = match.group(1).strip()
+        phones.append(phone)
+    return _dedupe(phones)
+
+
+def _append_unique(existing: list, additions: list[str]) -> list[str]:
+    result = [str(item).strip() for item in existing if str(item).strip()]
+    seen = {item.lower() for item in result}
+    for item in additions:
+        key = item.lower()
+        if key not in seen:
+            result.append(item)
+            seen.add(key)
+    return result
+
+
+def _dedupe(items: list[str]) -> list[str]:
+    result = []
+    seen = set()
+    for item in items:
+        key = item.lower()
+        if item and key not in seen:
+            result.append(item)
+            seen.add(key)
+    return result
 
 
 def run_once() -> int:
@@ -152,6 +205,8 @@ def _execute_job(session: Session, job: BackgroundJob) -> None:
         session.add(job)
         session.commit()
         return
+
+    _sync_profile_contact_from_text(session, job.user_id, text)
 
     source.parse_status = "extracting"
     session.add(source)
