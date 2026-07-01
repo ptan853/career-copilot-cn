@@ -16,7 +16,11 @@ def test_event_type_to_section_maps_known_types():
     }
     assert event_type_to_section("certification") == {
         "section_type": "certifications",
-        "section_title": "证书/课程",
+        "section_title": "证书",
+    }
+    assert event_type_to_section("course") == {
+        "section_type": "courses",
+        "section_title": "课程",
     }
 
 
@@ -232,6 +236,79 @@ def test_normalize_source_parse_preserves_explicit_section_for_custom_events():
 
     assert result.events[0].section_type == "projects"
     assert result.events[0].section_title == "项目"
+
+
+def test_normalize_source_parse_uses_event_detail_section_for_custom_events():
+    raw = {
+        "source_type": "resume",
+        "source_subtype": "resume",
+        "sections": [
+            {
+                "section_type": "other",
+                "section_title": "其他",
+                "events": [
+                    {
+                        "event_type": "custom",
+                        "title": "专业摘要",
+                        "description": "具备算法服务和 Agent 工具链经验。",
+                        "details": {"section_type": "summary"},
+                    },
+                    {
+                        "event_type": "custom",
+                        "title": "大模型与 Agent",
+                        "details": {"section_type": "skills", "skills": ["LangGraph", "Tool Calling"]},
+                    },
+                ],
+            }
+        ],
+    }
+
+    result = normalize_source_parse(raw)
+
+    assert result.events[0].section_type == "summary"
+    assert result.events[0].section_title == "专业摘要"
+    assert result.events[1].section_type == "skills"
+    assert result.events[1].section_title == "技能"
+    assert result.events[1].details_json["skills"] == ["LangGraph", "Tool Calling"]
+
+
+def test_normalize_source_parse_keeps_education_honors_and_duplicates_them_into_award_events():
+    raw = {
+        "source_type": "resume",
+        "source_subtype": "resume",
+        "sections": [
+            {
+                "section_type": "education",
+                "section_title": "教育",
+                "events": [
+                    {
+                        "event_type": "education",
+                        "title": "工学学士",
+                        "organization": "中国石油大学（北京）",
+                        "time_start": "2017-09",
+                        "time_end": "2021-06",
+                        "details": {
+                            "field": "自动化",
+                            "gpa": "88.60/100",
+                            "honors": ["2021 年学业优秀奖学金（一等）", "全国大学生数学竞赛二等奖"],
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+
+    result = normalize_source_parse(raw)
+
+    education_event = result.events[0]
+    assert education_event.section_type == "education"
+    assert education_event.details_json["honors"] == ["2021 年学业优秀奖学金（一等）", "全国大学生数学竞赛二等奖"]
+
+    award_events = result.events[1:]
+    assert [event.section_type for event in award_events] == ["awards", "awards"]
+    assert [event.event_type for event in award_events] == ["award", "competition"]
+    assert [event.title for event in award_events] == ["2021 年学业优秀奖学金（一等）", "全国大学生数学竞赛二等奖"]
+    assert all(event.organization == "中国石油大学（北京）" for event in award_events)
 
 
 def test_normalize_source_parse_clamps_invalid_time_precision():

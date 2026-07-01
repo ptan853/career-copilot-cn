@@ -1,6 +1,29 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
+import {
+  Award,
+  BookOpenCheck,
+  BriefcaseBusiness,
+  CheckCircle2,
+  Code2,
+  GraduationCap,
+  Languages,
+  Link2,
+  Loader2,
+  Mail,
+  MapPin,
+  Medal,
+  MoreHorizontal,
+  Pencil,
+  Phone,
+  Plus,
+  RefreshCw,
+  ScrollText,
+  Sparkles,
+  Trash2,
+} from 'lucide-react'
 import {
   clearVault,
   createSource,
@@ -55,6 +78,51 @@ const EVENT_TYPE_OPTIONS = [
   ['custom', '其他'],
 ]
 
+const EVENT_TYPE_TO_SECTION: Record<string, string> = {
+  work: 'experience',
+  internship: 'experience',
+  project: 'projects',
+  startup: 'projects',
+  open_source: 'projects',
+  education: 'education',
+  award: 'awards',
+  competition: 'awards',
+  certification: 'certifications',
+  course: 'courses',
+  publication: 'research',
+  patent: 'research',
+  volunteer: 'other',
+  language: 'languages',
+  custom: 'other',
+}
+
+const SECTION_ICON_MAP = {
+  summary: ScrollText,
+  experience: BriefcaseBusiness,
+  projects: Code2,
+  education: GraduationCap,
+  skills: Sparkles,
+  awards: Award,
+  courses: BookOpenCheck,
+  certifications: BookOpenCheck,
+  research: ScrollText,
+  other: Medal,
+  languages: Languages,
+}
+
+const SECTION_DEFAULT_EVENT_TYPE: Record<string, string> = {
+  experience: 'work',
+  projects: 'project',
+  education: 'education',
+  skills: 'custom',
+  awards: 'award',
+  courses: 'course',
+  certifications: 'certification',
+  research: 'publication',
+  other: 'custom',
+  languages: 'language',
+}
+
 const EMPTY_DETAILS = {
   bullets: [] as string[],
   skills: [] as string[],
@@ -86,7 +154,8 @@ type SourceItem = {
 type PendingFile = {
   id: string
   file: File
-  status: 'selected' | 'uploading' | 'failed'
+  status: 'selected' | 'uploading' | 'parsing' | 'failed'
+  sourceId?: string
   error?: string
 }
 
@@ -96,9 +165,17 @@ type ProfileData = {
   emails?: string[]
   phones?: string[]
   location?: string | null
-  links?: Array<{ label?: string; url?: string }>
+  links?: ProfileLinkForm[]
   summary?: string | null
   years_of_experience?: number | null
+}
+
+type ProfileLinkForm = {
+  label?: string
+  url?: string
+  link_type?: string
+  show_in_materials?: boolean
+  use_for_ai_parsing?: boolean
 }
 
 type ProfileForm = {
@@ -107,12 +184,12 @@ type ProfileForm = {
   email: string
   phone: string
   location: string
-  link_label: string
-  link_url: string
+  links: ProfileLinkForm[]
   years_of_experience: string
 }
 
 type EventForm = {
+  section_type: string
   title: string
   event_type: string
   role: string
@@ -136,9 +213,21 @@ type EventForm = {
   proficiency: string
 }
 
+function ModalPortal({ children }: { children: ReactNode }) {
+  const [mounted, setMounted] = useState(false)
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  if (!mounted) return null
+  return createPortal(children, document.body)
+}
+
 function eventToForm(event: VaultEvent): EventForm {
   const details = { ...EMPTY_DETAILS, ...(event.details_json || {}) }
   return {
+    section_type: getLiteSectionType(event),
     title: event.title || '',
     event_type: event.event_type || 'custom',
     role: event.role || '',
@@ -164,7 +253,9 @@ function eventToForm(event: VaultEvent): EventForm {
 }
 
 function emptyEventForm(eventType = 'work'): EventForm {
+  const sectionType = EVENT_TYPE_TO_SECTION[eventType] || 'other'
   return {
+    section_type: sectionType,
     title: '',
     event_type: eventType,
     role: '',
@@ -189,25 +280,35 @@ function emptyEventForm(eventType = 'work'): EventForm {
   }
 }
 
+function emptyEventFormForSection(sectionType: string): EventForm {
+  const eventType = SECTION_DEFAULT_EVENT_TYPE[sectionType] || 'custom'
+  return {
+    ...emptyEventForm(eventType),
+    section_type: sectionType,
+  }
+}
+
 function profileToForm(profile: ProfileData | null): ProfileForm {
-  const primaryLink = profile?.links?.find((link) => link.url)
   return {
     full_name: profile?.full_name || '',
     headline: profile?.headline || '',
     email: profile?.emails?.[0] || '',
     phone: profile?.phones?.[0] || '',
     location: profile?.location || '',
-    link_label: primaryLink?.label || '',
-    link_url: primaryLink?.url || '',
+    links: Array.isArray(profile?.links) ? profile.links : [],
     years_of_experience: typeof profile?.years_of_experience === 'number' ? String(profile.years_of_experience) : '',
   }
 }
 
 function profilePayloadFromForm(form: ProfileForm) {
   const years = Number.parseInt(form.years_of_experience, 10)
-  const links = form.link_url.trim()
-    ? [{ label: form.link_label.trim() || '个人链接', url: form.link_url.trim() }]
-    : []
+  const links = form.links
+    .map((link) => ({
+      ...link,
+      label: String(link.label || '').trim() || '个人链接',
+      url: String(link.url || '').trim(),
+    }))
+    .filter((link) => link.url)
 
   return {
     full_name: form.full_name.trim() || null,
@@ -236,6 +337,7 @@ function detailsFromForm(form: EventForm) {
   const honors = listFromCommaText(form.honors_text)
   const authors = listFromCommaText(form.authors_text)
 
+  if (form.section_type) details.section_type = form.section_type
   if (bullets.length) details.bullets = bullets
   if (skills.length) details.skills = skills
   if (techStack.length) details.tech_stack = techStack
@@ -263,6 +365,14 @@ function sourceStatusLabel(status: string) {
   return '队列中'
 }
 
+function isSourceParsing(source: SourceItem) {
+  return source.parse_status !== 'parsed' && source.parse_status !== 'failed'
+}
+
+function hasParsingSources(sources: SourceItem[]) {
+  return sources.some(isSourceParsing)
+}
+
 function sectionSortValue(sectionType: string) {
   const index = PROFILE_SECTION_ORDER.indexOf(sectionType)
   return index === -1 ? 999 : index
@@ -281,6 +391,16 @@ function groupForResume(sections: VaultSection[]) {
     .sort((a, b) => sectionSortValue(a.section_type) - sectionSortValue(b.section_type))
 }
 
+function SectionTitle({ sectionType, title }: { sectionType: string; title: string }) {
+  const Icon = SECTION_ICON_MAP[sectionType as keyof typeof SECTION_ICON_MAP] || ScrollText
+  return (
+    <div className="resume-section-title">
+      <span aria-hidden="true"><Icon size={22} /></span>
+      <h2>{title}</h2>
+    </div>
+  )
+}
+
 export default function VaultPage() {
   const [text, setText] = useState('')
   const [urls, setUrls] = useState('')
@@ -288,6 +408,7 @@ export default function VaultPage() {
   const [fileUploading, setFileUploading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [statusMessage, setStatusMessage] = useState('')
+  const [isWaitingForParse, setIsWaitingForParse] = useState(false)
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([])
   const [sources, setSources] = useState<SourceItem[]>([])
   const [sourcesLoading, setSourcesLoading] = useState(true)
@@ -299,11 +420,27 @@ export default function VaultPage() {
   const [activeEvent, setActiveEvent] = useState<VaultEvent | null>(null)
   const [eventForm, setEventForm] = useState<EventForm | null>(null)
   const [showNewEventModal, setShowNewEventModal] = useState(false)
+  const [showProfileActionsMenu, setShowProfileActionsMenu] = useState(false)
   const [clearingVault, setClearingVault] = useState(false)
+  const [confirmingAll, setConfirmingAll] = useState(false)
   const [newEventForm, setNewEventForm] = useState<EventForm>(emptyEventForm())
   const fileRef = useRef<HTMLInputElement>(null)
+  const profileActionMenuRef = useRef<HTMLDivElement>(null)
+  const submittedTextRef = useRef<{ text: string; urls: string; inputHint: string } | null>(null)
 
   const resumeSections = useMemo(() => groupForResume(sections), [sections])
+  const pendingConfirmEvents = useMemo(
+    () => resumeSections.flatMap((section) => section.events).filter((event) => event.status === 'draft' || event.status === 'needs_review'),
+    [resumeSections],
+  )
+  const pendingSourceIds = useMemo(
+    () => new Set(pendingFiles.map((item) => item.sourceId).filter(Boolean)),
+    [pendingFiles],
+  )
+  const visibleSources = useMemo(
+    () => sources.filter((source) => !pendingSourceIds.has(source.id)),
+    [sources, pendingSourceIds],
+  )
 
   async function loadProfile() {
     try {
@@ -314,20 +451,22 @@ export default function VaultPage() {
     }
   }
 
-  async function loadSections() {
-    setLoading(true)
+  async function loadSections(options: { showLoading?: boolean } = {}) {
+    const showLoading = options.showLoading ?? true
+    if (showLoading) setLoading(true)
     try {
       const response = await getGroupedEvents()
       setSections(response.data || [])
     } catch {
-      setStatusMessage('职业档案加载失败，请确认已登录')
+      if (showLoading) setStatusMessage('职业档案加载失败，请确认已登录')
     } finally {
-      setLoading(false)
+      if (showLoading) setLoading(false)
     }
   }
 
-  async function loadSources() {
-    setSourcesLoading(true)
+  async function loadSources(options: { showLoading?: boolean } = {}): Promise<SourceItem[] | null> {
+    const showLoading = options.showLoading ?? true
+    if (showLoading) setSourcesLoading(true)
     try {
       const response: any = await getSources()
       const summaries: SourceItem[] = response.data || []
@@ -346,10 +485,12 @@ export default function VaultPage() {
         }),
       )
       setSources(hydrated)
+      return hydrated
     } catch {
-      setStatusMessage('源材料加载失败，请确认已登录')
+      if (showLoading) setStatusMessage('源材料加载失败，请确认已登录')
+      return null
     } finally {
-      setSourcesLoading(false)
+      if (showLoading) setSourcesLoading(false)
     }
   }
 
@@ -357,35 +498,107 @@ export default function VaultPage() {
     loadProfile()
     loadSections()
     loadSources()
-    const sectionTimer = window.setInterval(loadSections, 5000)
-    const sourceTimer = window.setInterval(loadSources, 4000)
-    return () => {
-      window.clearInterval(sectionTimer)
-      window.clearInterval(sourceTimer)
-    }
   }, [])
 
-  async function submitTextSource(options: { silent?: boolean } = {}) {
+  useEffect(() => {
+    if (!isWaitingForParse) return
+    let cancelled = false
+
+    async function refreshUntilDone() {
+      const latestSources = await loadSources({ showLoading: false })
+      await loadSections({ showLoading: false })
+      if (latestSources) {
+        setPendingFiles((current) =>
+          current.flatMap((item) => {
+            if (!item.sourceId || item.status !== 'parsing') return [item]
+            const source = latestSources.find((candidate) => candidate.id === item.sourceId)
+            if (!source) return [item]
+            if (source.parse_status === 'parsed') return []
+            if (source.parse_status === 'failed') {
+              return [{
+                ...item,
+                status: 'failed' as const,
+                error: source.parse_error || 'AI 解析失败，可以修改设置后重试',
+              }]
+            }
+            return [item]
+          }),
+        )
+      }
+      if (!cancelled && latestSources && !hasParsingSources(latestSources)) {
+        setIsWaitingForParse(false)
+        if (latestSources.some((source) => source.parse_status === 'failed')) {
+          setStatusMessage('部分材料解析失败，原输入已保留，可以修改后重新尝试。')
+        } else {
+          const submittedText = submittedTextRef.current
+          if (submittedText) {
+            setText((current) => current === submittedText.text ? '' : current)
+            setUrls((current) => current === submittedText.urls ? '' : current)
+            setInputHint((current) => current === submittedText.inputHint ? '' : current)
+          }
+          setStatusMessage('解析完成，职业档案已更新')
+        }
+        submittedTextRef.current = null
+      }
+    }
+
+    refreshUntilDone()
+    const parseTimer = window.setInterval(refreshUntilDone, 4000)
+    return () => {
+      cancelled = true
+      window.clearInterval(parseTimer)
+    }
+  }, [isWaitingForParse])
+
+  useEffect(() => {
+    if (!showProfileActionsMenu) return
+
+    function handlePointerDown(event: PointerEvent) {
+      if (!profileActionMenuRef.current?.contains(event.target as Node)) {
+        setShowProfileActionsMenu(false)
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setShowProfileActionsMenu(false)
+      }
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [showProfileActionsMenu])
+
+  async function submitTextSource(options: { silent?: boolean; preserveInputsOnSuccess?: boolean } = {}): Promise<boolean> {
     const cleanText = text.trim()
     const cleanUrls = urls.split('\n').map((url) => url.trim()).filter((url) => url.startsWith('http'))
     if (!cleanText && cleanUrls.length === 0) {
       if (!options.silent) setStatusMessage('请先输入文字或链接')
-      return
+      return false
     }
     setSubmitting(true)
     if (!options.silent) setStatusMessage('正在创建解析任务...')
     try {
       await createSource({ text: cleanText, urls: cleanUrls, input_hint: inputHint.trim() })
-      setText('')
-      setUrls('')
-      setInputHint('')
+      if (!options.preserveInputsOnSuccess) {
+        setText('')
+        setUrls('')
+        setInputHint('')
+      }
       if (!options.silent) {
         setStatusMessage('已提交，解析完成后会出现在右侧')
+        setIsWaitingForParse(true)
         await loadSources()
         await loadSections()
       }
+      return true
     } catch {
       setStatusMessage('提交失败，请检查登录状态或 API 设置')
+      return false
     } finally {
       setSubmitting(false)
     }
@@ -413,15 +626,31 @@ export default function VaultPage() {
 
     setFileUploading(true)
     setStatusMessage('正在解析材料...')
+    let submittedCount = 0
     try {
       if (pendingFiles.length) {
         for (const item of pendingFiles) {
+          if (item.status === 'parsing' || item.status === 'uploading') continue
           setPendingFiles((current) =>
-            current.map((fileItem) => fileItem.id === item.id ? { ...fileItem, status: 'uploading' } : fileItem),
+            current.map((fileItem) => fileItem.id === item.id ? { ...fileItem, status: 'uploading', error: undefined } : fileItem),
           )
           try {
-            await uploadSourceFile(item.file)
-            setPendingFiles((current) => current.filter((fileItem) => fileItem.id !== item.id))
+            if (item.sourceId) {
+              try {
+                await deleteSource(item.sourceId)
+              } catch {
+                // Best effort cleanup; the new upload should still proceed.
+              }
+            }
+            const response: any = await uploadSourceFile(item.file)
+            submittedCount += 1
+            setPendingFiles((current) =>
+              current.map((fileItem) =>
+                fileItem.id === item.id
+                  ? { ...fileItem, status: 'parsing', sourceId: response.source_id, error: undefined }
+                  : fileItem,
+              ),
+            )
           } catch (error: any) {
             setPendingFiles((current) =>
               current.map((fileItem) =>
@@ -435,12 +664,20 @@ export default function VaultPage() {
       }
 
       if (text.trim() || urls.trim()) {
-        await submitTextSource({ silent: true })
+        const textSnapshot = { text, urls, inputHint }
+        const submittedText = await submitTextSource({ silent: true, preserveInputsOnSuccess: true })
+        if (submittedText) submittedCount += 1
+        if (submittedText) submittedTextRef.current = textSnapshot
       }
 
-      setStatusMessage('材料已提交，系统正在解析。右侧会自动刷新。')
-      await loadSources()
-      await loadSections()
+      if (submittedCount > 0) {
+        setStatusMessage('材料已提交，正在等待 AI 解析完成。')
+        setIsWaitingForParse(true)
+        await loadSources({ showLoading: false })
+        await loadSections({ showLoading: false })
+      } else {
+        setStatusMessage('没有成功提交的材料，请检查失败信息后重试。')
+      }
     } catch (error: any) {
       setStatusMessage(error?.message || '解析失败')
     } finally {
@@ -448,8 +685,17 @@ export default function VaultPage() {
     }
   }
 
-  function removePendingFile(id: string) {
-    setPendingFiles((current) => current.filter((item) => item.id !== id))
+  async function removePendingFile(id: string) {
+    const item = pendingFiles.find((candidate) => candidate.id === id)
+    setPendingFiles((current) => current.filter((candidate) => candidate.id !== id))
+    if (item?.sourceId) {
+      try {
+        await deleteSource(item.sourceId)
+        await loadSources({ showLoading: false })
+      } catch {
+        setStatusMessage('文件已移除，但后端材料记录删除失败')
+      }
+    }
   }
 
   async function removeSource(source: SourceItem) {
@@ -465,7 +711,7 @@ export default function VaultPage() {
   }
 
   async function clearCurrentVault() {
-    if (!window.confirm('这将清空所有职业档案、经历事件、证据和源材料记录。此操作不可恢复。')) return
+    if (!window.confirm('这将清空右侧职业档案中的经历条目、证据和左侧材料记录；不会删除账号、API Key、个人资料和模型配置。此操作不可恢复。')) return
     setClearingVault(true)
     try {
       await clearVault()
@@ -474,8 +720,7 @@ export default function VaultPage() {
       setSections([])
       setActiveEvent(null)
       setEventForm(null)
-      setProfile(null)
-      setStatusMessage('职业档案已清空')
+      setStatusMessage('职业档案内容已清空')
       await loadProfile()
       await loadSources()
       await loadSections()
@@ -494,6 +739,11 @@ export default function VaultPage() {
   function openProfileEditor() {
     setProfileForm(profileToForm(profile))
     setShowProfileModal(true)
+  }
+
+  function openNewEventForSection(sectionType: string) {
+    setNewEventForm(emptyEventFormForSection(sectionType))
+    setShowNewEventModal(true)
   }
 
   async function saveProfile() {
@@ -534,6 +784,21 @@ export default function VaultPage() {
     setActiveEvent(null)
     setEventForm(null)
     await loadSections()
+  }
+
+  async function confirmAllEvents() {
+    if (!pendingConfirmEvents.length) return
+    if (!window.confirm(`确定确认当前 ${pendingConfirmEvents.length} 条待确认档案条目？`)) return
+    setConfirmingAll(true)
+    try {
+      await Promise.all(pendingConfirmEvents.map((event) => confirmEvent(event.id)))
+      setStatusMessage(`已确认 ${pendingConfirmEvents.length} 条档案条目`)
+      await loadSections()
+    } catch (error: any) {
+      setStatusMessage(error?.message || '批量确认失败，请稍后重试')
+    } finally {
+      setConfirmingAll(false)
+    }
   }
 
   async function deleteActiveEvent() {
@@ -580,6 +845,7 @@ export default function VaultPage() {
           <h1>把材料交给 AI 识别</h1>
           <p>简历、项目笔记、作品链接和国内招聘平台文本都从这里进入同一个职业档案。</p>
         </div>
+        {statusMessage && <p className="status-message">{statusMessage}</p>}
 
         <button
           type="button"
@@ -608,38 +874,21 @@ export default function VaultPage() {
           }}
         />
 
-        {(pendingFiles.length > 0 || sources.length > 0) && (
+        {pendingFiles.length > 0 && (
           <div className="material-list">
             {pendingFiles.map((item, index) => (
               <div key={item.id} className={`material-row ${item.status === 'failed' ? 'failed' : ''}`}>
                 <span className="material-index">{index + 1}</span>
                 <div className="material-main">
                   <strong>{item.file.name}</strong>
-                  <span>{formatFileSize(item.file.size)} · {item.status === 'uploading' ? '上传中' : item.status === 'failed' ? item.error || '上传失败' : '待解析'}</span>
+                  <span>{formatFileSize(item.file.size)} · {item.status === 'uploading' ? '上传中' : item.status === 'parsing' ? 'AI 解析中' : item.status === 'failed' ? item.error || '上传失败' : '待解析'}</span>
                 </div>
-                <button type="button" onClick={() => removePendingFile(item.id)} disabled={item.status === 'uploading'} aria-label="删除文件">
+                <button type="button" onClick={() => removePendingFile(item.id)} disabled={item.status === 'uploading' || item.status === 'parsing'} aria-label="删除文件">
                   ×
                 </button>
               </div>
             ))}
 
-            {sources.map((source, index) => {
-              const analyzed = source.parse_status === 'parsed'
-              return (
-                <div key={source.id} className={`material-row ${analyzed ? 'analyzed' : ''} ${source.parse_status === 'failed' ? 'failed' : ''}`}>
-                  <span className="material-index">{pendingFiles.length + index + 1}</span>
-                  <div className="material-main">
-                    <strong>{source.title}</strong>
-                    <span>{source.source_type === 'file' ? '文件' : '文本'} · {sourceStatusLabel(source.parse_status)}</span>
-                    {source.parse_error && <p className="material-error">{source.parse_error}</p>}
-                  </div>
-                  <em>{sourceStatusLabel(source.parse_status)}</em>
-                  <button type="button" onClick={() => removeSource(source)} aria-label="删除材料">
-                    ×
-                  </button>
-                </div>
-              )
-            })}
           </div>
         )}
 
@@ -656,23 +905,23 @@ export default function VaultPage() {
           <input value={inputHint} onChange={(event) => setInputHint(event.target.value)} placeholder="例如：重点识别产品经历和量化成果" />
         </label>
 
-        <button className="submit-source" onClick={analyzePendingFiles} disabled={submitting || fileUploading}>
-          {submitting || fileUploading ? '解析中...' : '开始解析'}
+        <button className="submit-source" onClick={analyzePendingFiles} disabled={submitting || fileUploading || isWaitingForParse}>
+          {(submitting || fileUploading || isWaitingForParse) && <Loader2 size={17} className="spin-icon" />}
+          {submitting || fileUploading || isWaitingForParse ? '解析中...' : '开始解析'}
         </button>
-        {statusMessage && <p className="status-message">{statusMessage}</p>}
 
         <div className="source-list">
           <div className="source-list-heading">
             <h2>已解析内容</h2>
-            <button type="button" onClick={loadSources}>刷新</button>
+            <button type="button" onClick={() => loadSources()}>刷新</button>
           </div>
           {sourcesLoading ? (
             <p className="source-list-empty">正在加载材料...</p>
-          ) : sources.length === 0 ? (
+          ) : visibleSources.length === 0 ? (
             <p className="source-list-empty">解析完成后，会在这里展示提取出的文本内容。</p>
           ) : (
             <div className="source-list-stack">
-              {sources.slice(0, 6).map((source) => (
+              {visibleSources.slice(0, 6).map((source) => (
                 <div key={source.id} className={`source-list-item ${source.parse_status === 'failed' ? 'failed' : ''}`}>
                   <div>
                     <strong>{source.title}</strong>
@@ -683,6 +932,9 @@ export default function VaultPage() {
                     </span>
                   </div>
                   <em>{sourceStatusLabel(source.parse_status)}</em>
+                  <button type="button" onClick={() => removeSource(source)} aria-label="删除材料">
+                    ×
+                  </button>
                 </div>
               ))}
             </div>
@@ -697,10 +949,48 @@ export default function VaultPage() {
             <h1>像简历一样管理经历资产</h1>
           </div>
           <div className="vault-profile-actions">
-            <button onClick={() => { loadProfile(); loadSections() }}>刷新</button>
-            <button className="danger" onClick={clearCurrentVault} disabled={clearingVault}>
-              {clearingVault ? '清空中...' : '清空 Profile'}
+            <button
+              className="icon"
+              onClick={() => { loadProfile(); loadSections() }}
+              aria-label="刷新职业档案"
+              title="刷新职业档案"
+            >
+              <RefreshCw size={17} />
             </button>
+            <button
+              className="confirm"
+              onClick={confirmAllEvents}
+              disabled={loading || confirmingAll || pendingConfirmEvents.length === 0}
+            >
+              <CheckCircle2 size={17} />
+              {confirmingAll ? '确认中...' : `确认全部${pendingConfirmEvents.length ? ` ${pendingConfirmEvents.length}` : ''}`}
+            </button>
+            <div className="profile-action-menu" ref={profileActionMenuRef}>
+              <button
+                className="icon"
+                onClick={() => setShowProfileActionsMenu((current) => !current)}
+                aria-expanded={showProfileActionsMenu}
+                aria-label="更多操作"
+                title="更多操作"
+              >
+                <MoreHorizontal size={18} />
+              </button>
+              {showProfileActionsMenu && (
+                <div className="profile-action-popover">
+                  <button
+                    className="danger"
+                    onClick={() => {
+                      setShowProfileActionsMenu(false)
+                      clearCurrentVault()
+                    }}
+                    disabled={clearingVault}
+                  >
+                    <Trash2 size={15} />
+                    {clearingVault ? '清空中...' : '清空档案内容'}
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -708,10 +998,7 @@ export default function VaultPage() {
 
         {profile?.summary && (
           <div className="resume-section resume-summary">
-            <div className="resume-section-title">
-              <span>▣</span>
-              <h2>专业摘要</h2>
-            </div>
+            <SectionTitle sectionType="summary" title="专业摘要" />
             <p>{profile.summary}</p>
           </div>
         )}
@@ -724,9 +1011,12 @@ export default function VaultPage() {
           <div className="resume-section-stack">
             {resumeSections.map((section) => (
               <div key={section.section_type} className="resume-section">
-                <div className="resume-section-title">
-                  <span>▣</span>
-                  <h2>{section.section_title}</h2>
+                <div className="resume-section-head">
+                  <SectionTitle sectionType={section.section_type} title={section.section_title} />
+                  <button type="button" onClick={() => openNewEventForSection(section.section_type)}>
+                    <Plus size={16} />
+                    新增条目
+                  </button>
                 </div>
                 <div className="resume-items">
                   {section.events.map((event) => (
@@ -740,10 +1030,13 @@ export default function VaultPage() {
 
         {!loading && (
           <div className="manual-add-area">
-            <button className="manual-add-btn" onClick={() => setShowNewEventModal(true)}>
-              手动新增经历
+            <button className="manual-add-btn" onClick={() => {
+              setNewEventForm(emptyEventForm())
+              setShowNewEventModal(true)
+            }}>
+              手动新增条目
             </button>
-            <p>也可以不依赖 AI，直接手动填写工作、项目、教育等类型的条目。</p>
+            <p>如果要添加某个 section 内的新内容，可以直接用 section 右上角的“新增条目”。</p>
           </div>
         )}
       </section>
@@ -756,7 +1049,7 @@ export default function VaultPage() {
           onClose={() => setActiveEvent(null)}
           onDelete={deleteActiveEvent}
           onSave={saveEvent}
-          onConfirm={confirmActiveEvent}
+          onConfirm={activeEvent.status === 'confirmed' ? undefined : confirmActiveEvent}
         />
       )}
 
@@ -786,21 +1079,48 @@ export default function VaultPage() {
 function ProfileHeader({ profile, onEdit }: { profile: ProfileData | null; onEdit: () => void }) {
   const primaryEmail = profile?.emails?.[0]
   const primaryPhone = profile?.phones?.[0]
-  const primaryLink = profile?.links?.find((link) => link.url)
+  const links = (profile?.links || []).filter((link) => link.url)
 
   return (
     <div className="resume-hero">
-      <button className="resume-hero-edit" onClick={onEdit} aria-label="编辑个人资料">✎</button>
+      <button className="resume-hero-edit" onClick={onEdit} aria-label="编辑个人资料">
+        <Pencil size={18} />
+      </button>
       <div>
         <h2>{profile?.full_name || '你的姓名'}</h2>
         <p>{profile?.headline || '添加材料后，AI 会整理你的职业身份'}</p>
       </div>
       <div className="resume-contact-row">
-        {typeof profile?.years_of_experience === 'number' && <span>{profile.years_of_experience} 年经验</span>}
-        {primaryEmail && <span>{primaryEmail}</span>}
-        {primaryPhone && <span>{primaryPhone}</span>}
-        {profile?.location && <span>{profile.location}</span>}
-        {primaryLink?.url && <a href={primaryLink.url} target="_blank" rel="noreferrer">{primaryLink.label || '个人链接'}</a>}
+        {typeof profile?.years_of_experience === 'number' && (
+          <span>
+            <BriefcaseBusiness size={17} />
+            {profile.years_of_experience} 年经验
+          </span>
+        )}
+        {primaryEmail && (
+          <span>
+            <Mail size={17} />
+            {primaryEmail}
+          </span>
+        )}
+        {primaryPhone && (
+          <span>
+            <Phone size={17} />
+            {primaryPhone}
+          </span>
+        )}
+        {profile?.location && (
+          <span>
+            <MapPin size={17} />
+            {profile.location}
+          </span>
+        )}
+        {links.map((link) => (
+          <a key={`${link.label || 'link'}-${link.url}`} href={link.url} target="_blank" rel="noreferrer">
+            <Link2 size={17} />
+            {link.label || '个人链接'}
+          </a>
+        ))}
       </div>
     </div>
   )
@@ -817,8 +1137,23 @@ function ProfileModal({
   onClose: () => void
   onSave: () => void
 }) {
+  const updateLink = (index: number, patch: Partial<ProfileLinkForm>) => {
+    const links = [...form.links]
+    links[index] = { ...links[index], ...patch }
+    onChange({ ...form, links })
+  }
+
+  const addLink = () => {
+    onChange({ ...form, links: [...form.links, { label: '个人链接', url: '', show_in_materials: true }] })
+  }
+
+  const removeLink = (index: number) => {
+    onChange({ ...form, links: form.links.filter((_, itemIndex) => itemIndex !== index) })
+  }
+
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <ModalPortal>
+      <div className="modal-backdrop" onClick={onClose}>
       <div className="event-modal profile-modal" onClick={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <div>
@@ -835,8 +1170,36 @@ function ProfileModal({
           <label>电话<input value={form.phone} onChange={(event) => onChange({ ...form, phone: event.target.value })} /></label>
           <label>地点<input value={form.location} onChange={(event) => onChange({ ...form, location: event.target.value })} /></label>
           <label>工作年限<input value={form.years_of_experience} onChange={(event) => onChange({ ...form, years_of_experience: event.target.value })} placeholder="例如：1" /></label>
-          <label>链接名称<input value={form.link_label} onChange={(event) => onChange({ ...form, link_label: event.target.value })} placeholder="GitHub / 作品集" /></label>
-          <label>链接地址<input value={form.link_url} onChange={(event) => onChange({ ...form, link_url: event.target.value })} placeholder="https://..." /></label>
+        </div>
+
+        <div className="profile-link-editor">
+          <div className="profile-link-editor-head">
+            <h3>个人链接</h3>
+            <button type="button" onClick={addLink}>添加链接</button>
+          </div>
+          {form.links.length === 0 ? (
+            <p className="form-empty-hint">还没有链接，可以添加 GitHub、作品集、LinkedIn 或个人网站。</p>
+          ) : (
+            <div className="profile-link-list">
+              {form.links.map((link, index) => (
+                <div className="profile-link-row" key={`profile-link-${index}`}>
+                  <input
+                    value={link.label || ''}
+                    onChange={(event) => updateLink(index, { label: event.target.value })}
+                    placeholder="GitHub / 作品集"
+                  />
+                  <input
+                    value={link.url || ''}
+                    onChange={(event) => updateLink(index, { url: event.target.value })}
+                    placeholder="https://..."
+                  />
+                  <button type="button" onClick={() => removeLink(index)} aria-label="删除链接">
+                    <Trash2 size={15} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="modal-actions">
@@ -844,7 +1207,8 @@ function ProfileModal({
           <button onClick={onSave} className="primary">保存资料</button>
         </div>
       </div>
-    </div>
+      </div>
+    </ModalPortal>
   )
 }
 
@@ -857,9 +1221,28 @@ function ResumeEvent({ event, onEdit }: { event: VaultEvent; onEdit: () => void 
   const dateRange = joinDateRange(event.time_start, event.time_end)
   const chips = sectionType === 'projects' ? techStack : skills
 
+  if (sectionType === 'courses') {
+    return (
+      <article className="resume-course-row">
+        <div>
+          <strong>{event.title}</strong>
+          {event.organization && <span> — {event.organization}</span>}
+        </div>
+        <div className="resume-course-meta">
+          {dateRange && <time>{dateRange}</time>}
+          <button className="resume-edit-btn" onClick={onEdit} aria-label={`编辑${event.title}`}>
+            <Pencil size={17} />
+          </button>
+        </div>
+      </article>
+    )
+  }
+
   return (
     <article className={`resume-item resume-item-${sectionType}`}>
-      <button className="resume-edit-btn" onClick={onEdit} aria-label={`编辑${event.title}`}>✎</button>
+      <button className="resume-edit-btn" onClick={onEdit} aria-label={`编辑${event.title}`}>
+        <Pencil size={17} />
+      </button>
       <div className="resume-item-head">
         <div>
           <h3>{event.title}</h3>
@@ -895,7 +1278,7 @@ function ResumeEvent({ event, onEdit }: { event: VaultEvent; onEdit: () => void 
         </div>
       )}
       <div className="resume-status-row">
-        <span>{STATUS_LABELS[event.status] || event.status}</span>
+        <span className={`status-${event.status}`}>{STATUS_LABELS[event.status] || event.status}</span>
       </div>
     </article>
   )
@@ -926,11 +1309,42 @@ function EventModal({
     title: form.title,
     status: form.status,
     visibility: form.visibility,
-    details_json: {},
+    details_json: { section_type: form.section_type },
   })
+  const bulletLines = form.bullets_text ? form.bullets_text.split('\n') : []
+  const showBullets = sectionType === 'experience' || sectionType === 'projects'
+  const showTypeSelector = sectionType !== 'skills'
+  const showRole = sectionType === 'experience' || sectionType === 'projects' || sectionType === 'other'
+  const showOrganization = sectionType !== 'skills' && sectionType !== 'languages'
+  const showDateRange = sectionType === 'experience' || sectionType === 'projects' || sectionType === 'other'
+  const showSingleDate = sectionType === 'education' || sectionType === 'awards' || sectionType === 'courses' || sectionType === 'certifications' || sectionType === 'research'
+  const showDescription = sectionType !== 'skills' && sectionType !== 'languages'
+  const organizationLabel =
+    sectionType === 'education' ? '学校'
+      : sectionType === 'projects' ? '组织/上下文'
+        : sectionType === 'awards' ? '颁发方'
+          : sectionType === 'courses' ? '机构/平台'
+            : sectionType === 'certifications' ? '机构'
+            : sectionType === 'research' ? '发表/授权方'
+              : '机构/公司'
+
+  const updateBullet = (index: number, value: string) => {
+    const nextBullets = [...bulletLines]
+    nextBullets[index] = value
+    onChange({ ...form, bullets_text: nextBullets.join('\n') })
+  }
+
+  const addBullet = () => {
+    onChange({ ...form, bullets_text: [...bulletLines, ''].join('\n') })
+  }
+
+  const removeBullet = (index: number) => {
+    onChange({ ...form, bullets_text: bulletLines.filter((_, bulletIndex) => bulletIndex !== index).join('\n') })
+  }
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <ModalPortal>
+      <div className="modal-backdrop" onClick={onClose}>
       <div className="event-modal" onClick={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <div>
@@ -941,38 +1355,53 @@ function EventModal({
         </div>
 
         <div className="modal-grid">
-          <label>类型<select value={form.event_type} onChange={(event) => onChange({ ...form, event_type: event.target.value })}>{EVENT_TYPE_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-          <label>标题<input value={form.title} onChange={(event) => onChange({ ...form, title: event.target.value })} /></label>
-          {sectionType !== 'education' && sectionType !== 'languages' && <label>角色<input value={form.role} onChange={(event) => onChange({ ...form, role: event.target.value })} /></label>}
-          <label>{sectionType === 'education' ? '学校' : sectionType === 'projects' ? '组织/上下文' : '机构/公司'}<input value={form.organization} onChange={(event) => onChange({ ...form, organization: event.target.value })} /></label>
-          <label>开始时间<input value={form.time_start} onChange={(event) => onChange({ ...form, time_start: event.target.value })} /></label>
-          <label>结束时间<input value={form.time_end} onChange={(event) => onChange({ ...form, time_end: event.target.value })} /></label>
+          {showTypeSelector && <label>类型<select value={form.event_type} onChange={(event) => {
+            const eventType = event.target.value
+            onChange({ ...form, event_type: eventType, section_type: EVENT_TYPE_TO_SECTION[eventType] || form.section_type })
+          }}>{EVENT_TYPE_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
+          <label>{sectionType === 'skills' ? '技能分类' : sectionType === 'languages' ? '语言' : sectionType === 'education' ? '学位/学历' : '标题'}<input value={form.title} onChange={(event) => onChange({ ...form, title: event.target.value })} /></label>
+          {showRole && <label>角色<input value={form.role} onChange={(event) => onChange({ ...form, role: event.target.value })} /></label>}
+          {showOrganization && <label>{organizationLabel}<input value={form.organization} onChange={(event) => onChange({ ...form, organization: event.target.value })} /></label>}
+          {showDateRange && <label>开始时间<input value={form.time_start} onChange={(event) => onChange({ ...form, time_start: event.target.value })} /></label>}
+          {showDateRange && <label>结束时间<input value={form.time_end} onChange={(event) => onChange({ ...form, time_end: event.target.value })} /></label>}
+          {showSingleDate && <label>{sectionType === 'education' ? '毕业时间' : '时间/年份'}<input value={form.time_end} onChange={(event) => onChange({ ...form, time_end: event.target.value })} /></label>}
           {sectionType === 'experience' && <label>地点<input value={form.location} onChange={(event) => onChange({ ...form, location: event.target.value })} /></label>}
           {sectionType === 'education' && <label>专业<input value={form.field} onChange={(event) => onChange({ ...form, field: event.target.value })} /></label>}
           {sectionType === 'education' && <label>GPA<input value={form.gpa} onChange={(event) => onChange({ ...form, gpa: event.target.value })} /></label>}
+          {sectionType === 'education' && <label>学校期间荣誉<input value={form.honors_text} onChange={(event) => onChange({ ...form, honors_text: event.target.value })} placeholder="奖学金，优秀学生，校内竞赛奖项" /></label>}
           {sectionType === 'languages' && <label>熟练度<input value={form.proficiency} onChange={(event) => onChange({ ...form, proficiency: event.target.value })} /></label>}
-          {(sectionType === 'projects' || sectionType === 'certifications' || sectionType === 'research') && <label>链接<input value={form.url} onChange={(event) => onChange({ ...form, url: event.target.value })} /></label>}
+          {(sectionType === 'projects' || sectionType === 'courses' || sectionType === 'certifications' || sectionType === 'research') && <label>链接<input value={form.url} onChange={(event) => onChange({ ...form, url: event.target.value })} /></label>}
           {sectionType === 'projects' && <label>技术栈<input value={form.tech_stack_text} onChange={(event) => onChange({ ...form, tech_stack_text: event.target.value })} placeholder="Python，FastAPI，LangGraph" /></label>}
-          {sectionType === 'experience' && <label>技能<input value={form.skills_text} onChange={(event) => onChange({ ...form, skills_text: event.target.value })} placeholder="LLM Agent，Tool Calling" /></label>}
-          {sectionType === 'education' && <label>荣誉<input value={form.honors_text} onChange={(event) => onChange({ ...form, honors_text: event.target.value })} /></label>}
+          {(sectionType === 'experience' || sectionType === 'skills') && <label>{sectionType === 'skills' ? '技能' : '技能'}<input value={form.skills_text} onChange={(event) => onChange({ ...form, skills_text: event.target.value })} placeholder="LLM Agent，Tool Calling" /></label>}
           {sectionType === 'research' && <label>作者/发明人<input value={form.authors_text} onChange={(event) => onChange({ ...form, authors_text: event.target.value })} /></label>}
         </div>
 
-        {(sectionType === 'experience' || sectionType === 'projects') && (
-          <label className="modal-field">
-            要点列表
-            <textarea
-              value={form.bullets_text}
-              onChange={(event) => onChange({ ...form, bullets_text: event.target.value })}
-              placeholder="每行一条简历 bullet"
-            />
-          </label>
+        {showBullets && (
+          <div className="bullet-editor">
+            <div className="bullet-editor-head">
+              <span>要点列表</span>
+              <button type="button" onClick={addBullet}>添加要点</button>
+            </div>
+            {(bulletLines.length ? bulletLines : ['']).map((bullet, index) => (
+              <div className="bullet-editor-row" key={`bullet-${index}`}>
+                <span aria-hidden="true">•</span>
+                <textarea
+                  value={bullet}
+                  onChange={(event) => updateBullet(index, event.target.value)}
+                  placeholder="每行一个简历要点"
+                />
+                <button type="button" onClick={() => removeBullet(index)} aria-label="删除要点">
+                  <Trash2 size={15} />
+                </button>
+              </div>
+            ))}
+          </div>
         )}
 
-        <label className="modal-field">
+        {showDescription && <label className="modal-field">
           描述
           <textarea value={form.description} onChange={(event) => onChange({ ...form, description: event.target.value })} />
-        </label>
+        </label>}
 
         <div className="modal-actions">
           {onDelete && <button onClick={onDelete} className="danger">删除条目</button>}
@@ -980,6 +1409,7 @@ function EventModal({
           {onConfirm && <button onClick={onConfirm}>确认入库</button>}
         </div>
       </div>
-    </div>
+      </div>
+    </ModalPortal>
   )
 }

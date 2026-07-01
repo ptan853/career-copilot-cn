@@ -11,6 +11,10 @@ def test_event_type_to_profile_section_maps_lite_sections():
     assert event_type_to_profile_section("project").section_type == "projects"
     assert event_type_to_profile_section("education").section_title == "教育"
     assert event_type_to_profile_section("award").section_type == "awards"
+    assert event_type_to_profile_section("award").section_title == "荣誉/奖项"
+    assert event_type_to_profile_section("course").section_type == "courses"
+    assert event_type_to_profile_section("course").section_title == "课程"
+    assert event_type_to_profile_section("certification").section_title == "证书"
     assert event_type_to_profile_section("publication").section_type == "research"
     assert event_type_to_profile_section("language").section_type == "languages"
 

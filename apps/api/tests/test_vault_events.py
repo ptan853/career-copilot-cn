@@ -289,7 +289,7 @@ def test_claim_update_and_delete_are_user_scoped(tmp_path):
         assert session.get(Claim, claim.id) is None
 
 
-def test_delete_source_removes_associated_parse_results(tmp_path):
+def test_delete_source_removes_unconfirmed_parse_results_but_keeps_confirmed_events(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'delete_source.db'}", echo=False)
     SQLModel.metadata.create_all(engine)
 
@@ -305,14 +305,26 @@ def test_delete_source_removes_associated_parse_results(tmp_path):
         session.refresh(source)
 
         event = CareerEvent(user_id=user.id, event_type="work", title="工作", source_id=source.id)
+        confirmed_event = CareerEvent(
+            user_id=user.id,
+            event_type="project",
+            title="已确认项目",
+            source_id=source.id,
+            status="confirmed",
+        )
         session.add(event)
+        session.add(confirmed_event)
         session.commit()
         session.refresh(event)
+        session.refresh(confirmed_event)
 
         claim = Claim(user_id=user.id, career_event_id=event.id, claim_text="增长 20%")
+        confirmed_claim = Claim(user_id=user.id, career_event_id=confirmed_event.id, claim_text="已确认事实")
         session.add(claim)
+        session.add(confirmed_claim)
         session.commit()
         session.refresh(claim)
+        session.refresh(confirmed_claim)
 
         evidence = Evidence(
             user_id=user.id,
@@ -340,12 +352,17 @@ def test_delete_source_removes_associated_parse_results(tmp_path):
         assert response.status_code == 200
         assert session.get(SourceMaterial, source.id) is None
         assert session.get(CareerEvent, event.id) is None
+        kept_event = session.get(CareerEvent, confirmed_event.id)
+        assert kept_event is not None
+        assert kept_event.status == "confirmed"
+        assert kept_event.source_id is None
         assert session.get(Claim, claim.id) is None
+        assert session.get(Claim, confirmed_claim.id) is not None
         assert session.exec(select(Evidence).where(Evidence.source_material_id == source.id)).all() == []
         assert session.exec(select(BackgroundJob).where(BackgroundJob.id == job.id)).first() is None
 
 
-def test_clear_vault_removes_only_current_user_profile_and_vault_data(tmp_path):
+def test_clear_vault_removes_only_current_user_vault_data_and_preserves_profile_settings(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'clear_vault.db'}", echo=False)
     SQLModel.metadata.create_all(engine)
 
@@ -358,7 +375,13 @@ def test_clear_vault_removes_only_current_user_profile_and_vault_data(tmp_path):
         session.refresh(owner)
         session.refresh(other)
 
-        owner_profile = Profile(user_id=owner.id, full_name="Owner")
+        owner_profile = Profile(
+            user_id=owner.id,
+            full_name="Owner",
+            headline="Agent Engineer",
+            ai_provider="bailian_qwen",
+            ai_api_key="sk-owner-provider-key-123456",
+        )
         other_profile = Profile(user_id=other.id, full_name="Other")
         owner_source = SourceMaterial(user_id=owner.id, source_type="file", title="owner.pdf")
         other_source = SourceMaterial(user_id=other.id, source_type="file", title="other.pdf")
@@ -399,7 +422,12 @@ def test_clear_vault_removes_only_current_user_profile_and_vault_data(tmp_path):
             app.dependency_overrides.clear()
 
         assert response.status_code == 200
-        assert session.exec(select(Profile).where(Profile.user_id == owner.id)).first() is None
+        preserved_profile = session.exec(select(Profile).where(Profile.user_id == owner.id)).first()
+        assert preserved_profile is not None
+        assert preserved_profile.full_name == "Owner"
+        assert preserved_profile.headline == "Agent Engineer"
+        assert preserved_profile.ai_provider == "bailian_qwen"
+        assert preserved_profile.ai_api_key == "sk-owner-provider-key-123456"
         assert session.exec(select(SourceMaterial).where(SourceMaterial.user_id == owner.id)).all() == []
         assert session.exec(select(CareerEvent).where(CareerEvent.user_id == owner.id)).all() == []
         assert session.exec(select(Claim).where(Claim.user_id == owner.id)).all() == []

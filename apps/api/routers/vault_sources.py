@@ -228,16 +228,18 @@ def delete_source(
     events = session.exec(
         select(CareerEvent).where(CareerEvent.user_id == user_uuid, CareerEvent.source_id == source.id)
     ).all()
-    event_ids = [event.id for event in events]
+    confirmed_events = [event for event in events if event.status == "confirmed"]
+    removable_events = [event for event in events if event.status != "confirmed"]
+    removable_event_ids = [event.id for event in removable_events]
     claims = []
-    if event_ids:
-        claims = session.exec(select(Claim).where(Claim.career_event_id.in_(event_ids))).all()
+    if removable_event_ids:
+        claims = session.exec(select(Claim).where(Claim.career_event_id.in_(removable_event_ids))).all()
     claim_ids = [claim.id for claim in claims]
 
     evidence_query = select(Evidence).where(Evidence.user_id == user_uuid, Evidence.source_material_id == source.id)
     evidences = session.exec(evidence_query).all()
-    if event_ids:
-        evidences.extend(session.exec(select(Evidence).where(Evidence.career_event_id.in_(event_ids))).all())
+    if removable_event_ids:
+        evidences.extend(session.exec(select(Evidence).where(Evidence.career_event_id.in_(removable_event_ids))).all())
     if claim_ids:
         evidences.extend(session.exec(select(Evidence).where(Evidence.claim_id.in_(claim_ids))).all())
 
@@ -251,8 +253,12 @@ def delete_source(
     for claim in claims:
         session.delete(claim)
 
-    for event in events:
+    for event in removable_events:
         session.delete(event)
+
+    for event in confirmed_events:
+        event.source_id = None
+        session.add(event)
 
     jobs = session.exec(
         select(BackgroundJob).where(BackgroundJob.user_id == user_uuid, BackgroundJob.job_type == "source_parse")

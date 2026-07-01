@@ -19,7 +19,7 @@ VALID_CLAIM_TYPES = {
 VALID_STRENGTHS = {"confirmed", "inferred", "weak"}
 VALID_TIME_PRECISIONS = {"day", "month", "year", "unknown"}
 VALID_SECTION_TYPES = {
-    "summary", "experience", "projects", "education", "skills", "awards",
+    "summary", "experience", "projects", "education", "skills", "awards", "courses",
     "certifications", "research", "other", "languages", "custom",
 }
 LEGACY_SECTION_TYPE_MAP = {
@@ -36,8 +36,9 @@ SECTION_TITLE_BY_TYPE = {
     "projects": "项目",
     "education": "教育",
     "skills": "技能",
-    "awards": "奖项",
-    "certifications": "证书/课程",
+    "awards": "荣誉/奖项",
+    "courses": "课程",
+    "certifications": "证书",
     "research": "论文/专利",
     "other": "志愿/社团/其他",
     "languages": "语言",
@@ -121,6 +122,22 @@ def _details(raw: dict[str, Any]) -> dict[str, Any]:
     return normalize_lite_details(event_type, details)
 
 
+def _list_of_strings(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str):
+        return [item.strip() for item in value.replace("，", ",").split(",") if item.strip()]
+    return []
+
+
+def _honor_event_type(honor: str) -> str:
+    lowered = honor.lower()
+    competition_markers = ("竞赛", "比赛", "大赛", "competition", "contest", "challenge", "hackathon")
+    if any(marker in lowered for marker in competition_markers):
+        return "competition"
+    return "award"
+
+
 def normalize_source_parse(raw: dict[str, Any]) -> NormalizedParseResult:
     result = NormalizedParseResult(
         source_type=_clean_string(raw.get("source_type")) or "unknown",
@@ -139,11 +156,12 @@ def normalize_source_parse(raw: dict[str, Any]) -> NormalizedParseResult:
                 continue
             event_type = _safe_enum(raw_event.get("event_type"), VALID_EVENT_TYPES, "custom")
             mapped = event_type_to_section(event_type)
-            raw_section_type = _safe_section_type(section.get("section_type"))
+            raw_details = raw_event.get("details") if isinstance(raw_event.get("details"), dict) else {}
+            raw_section_type = _safe_section_type(raw_details.get("section_type")) or _safe_section_type(section.get("section_type"))
             raw_section_title = _clean_string(section.get("section_title"))
-            if event_type == "custom" and raw_section_type and raw_section_title:
+            if event_type == "custom" and raw_section_type:
                 section_type = raw_section_type
-                section_title = SECTION_TITLE_BY_TYPE.get(raw_section_type, raw_section_title)
+                section_title = SECTION_TITLE_BY_TYPE.get(raw_section_type, raw_section_title or "其他")
             else:
                 section_type = mapped["section_type"]
                 section_title = mapped["section_title"]
@@ -176,6 +194,11 @@ def normalize_source_parse(raw: dict[str, Any]) -> NormalizedParseResult:
                     confidence=raw_evidence.get("confidence") if isinstance(raw_evidence.get("confidence"), (int, float)) else None,
                 ))
 
+            normalized_details = _details(raw_event)
+            education_honors = []
+            if event_type == "education":
+                education_honors = _list_of_strings(raw_details.get("honors"))
+
             result.events.append(NormalizedEvent(
                 section_type=section_type,
                 section_title=section_title,
@@ -188,12 +211,26 @@ def normalize_source_parse(raw: dict[str, Any]) -> NormalizedParseResult:
                 time_end=_clean_string(raw_event.get("time_end")),
                 time_precision=_safe_enum(raw_event.get("time_precision"), VALID_TIME_PRECISIONS, "unknown"),
                 description=_clean_string(raw_event.get("description")),
-                details_json=_details(raw_event),
+                details_json=normalized_details,
                 tags=raw_event.get("tags") if isinstance(raw_event.get("tags"), list) else [],
                 status="draft",
                 confidence=raw_event.get("confidence") if isinstance(raw_event.get("confidence"), (int, float)) else None,
                 claims=claims,
                 evidence=evidence,
             ))
+
+            for honor in education_honors:
+                honor_event_type = _honor_event_type(honor)
+                result.events.append(NormalizedEvent(
+                    section_type="awards",
+                    section_title=SECTION_TITLE_BY_TYPE["awards"],
+                    event_type=honor_event_type,
+                    title=honor,
+                    organization=_clean_string(raw_event.get("organization")),
+                    time_end=_clean_string(raw_event.get("time_end")),
+                    time_precision=_safe_enum(raw_event.get("time_precision"), VALID_TIME_PRECISIONS, "unknown"),
+                    status="draft",
+                    confidence=raw_event.get("confidence") if isinstance(raw_event.get("confidence"), (int, float)) else None,
+                ))
 
     return result

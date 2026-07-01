@@ -36,12 +36,8 @@ def clear_vault(
     for source in session.exec(select(SourceMaterial).where(SourceMaterial.user_id == user_uuid)).all():
         session.delete(source)
 
-    profile = session.exec(select(Profile).where(Profile.user_id == user_uuid)).first()
-    if profile:
-        session.delete(profile)
-
     session.commit()
-    return {"message": "已清空职业档案"}
+    return {"message": "已清空职业档案内容，个人资料和模型配置已保留"}
 
 # ============================================================
 # Profile
