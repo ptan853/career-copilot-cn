@@ -52,7 +52,109 @@ ParseBatch
   -> right-side profile refresh
 ```
 
-## 4. Input Model
+The pipeline is driven by a single schema registry:
+
+```text
+Vault Section Schema Registry
+  -> prompt field descriptions
+  -> section output JSON shape
+  -> deterministic normalizer rules
+  -> canonical dedupe keys
+  -> future frontend edit forms
+```
+
+The schema registry is the source of truth. Section prompts must not contain separate hand-maintained field definitions that can drift away from backend normalization or frontend edit forms.
+
+## 4. Section Schema Registry
+
+### Purpose
+
+Each section has a structured schema:
+
+```json
+{
+  "section_type": "experience",
+  "title": "工作/实习",
+  "description": "用户的工作、实习、兼职角色。",
+  "event_types": ["work", "internship"],
+  "dedupe_fields": ["organization", "title", "time_start", "time_end"],
+  "fields": [
+    {
+      "path": "title",
+      "label": "职位",
+      "type": "string",
+      "meaning": "用户在该经历中的职位或角色名称",
+      "required": true
+    },
+    {
+      "path": "organization",
+      "label": "公司/组织",
+      "type": "string",
+      "meaning": "雇主、实验室、团队或组织名称",
+      "required": false
+    },
+    {
+      "path": "details.bullets",
+      "label": "要点",
+      "type": "string[]",
+      "meaning": "简历中可复用的经历要点，每条应包含贡献、方法或结果",
+      "required": false
+    }
+  ]
+}
+```
+
+Required backend API:
+
+```python
+get_section_schema(section_type: str) -> SectionSchema
+render_section_field_instructions(section_type: str) -> str
+render_section_output_schema(section_type: str) -> dict
+get_section_dedupe_fields(section_type: str) -> list[str]
+normalize_event_with_schema(section_type: str, event: dict) -> dict
+```
+
+### Required Initial Sections
+
+- profile
+- summary
+- experience
+- projects
+- education
+- courses
+- awards
+- skills
+- certifications
+- research
+- languages
+- other
+
+### Prompt Generation Rule
+
+Every section extractor prompt uses the same template:
+
+```text
+你是 {{section.title}} 抽取器。
+
+Section 含义:
+{{section.description}}
+
+字段定义:
+{{render_section_field_instructions(section_type)}}
+
+当前已有内容:
+{{existing_events_json}}
+
+新材料片段:
+{{source_spans_json}}
+
+输出 JSON:
+{{render_section_output_schema(section_type)}}
+```
+
+This means adding a new field should only require updating the schema registry and related tests. The prompt should update automatically.
+
+## 5. Input Model
 
 Vault has four input channels.
 
@@ -112,7 +214,7 @@ Examples:
 
 It belongs to `ParseBatch.instruction`, and every AI call in this batch should receive it.
 
-## 5. Layer 1: Source-Level Section Detection
+## 6. Layer 1: Source-Level Section Detection
 
 ### Purpose
 
@@ -217,7 +319,7 @@ User:
 }
 ```
 
-## 6. Layer 2: Section-Level Event Extraction
+## 7. Layer 2: Section-Level Event Extraction
 
 ### Purpose
 
@@ -271,9 +373,11 @@ All section extractors must follow these rules:
 - Keep fields simple and aligned with the right-side resume-like UI.
 - Return JSON only.
 
-## 7. Section Prompt Contracts
+## 8. Section Prompt Contracts
 
-### 7.1 Profile Extractor
+The following contracts define the initial schema registry content. The actual code should generate prompt field descriptions and output schema from these definitions instead of duplicating them by hand in every prompt.
+
+### 8.1 Profile Extractor
 
 Fields:
 
@@ -315,7 +419,7 @@ Prompt user body:
 }
 ```
 
-### 7.2 Summary Extractor
+### 8.2 Summary Extractor
 
 Fields:
 
@@ -350,7 +454,7 @@ Prompt user body:
 }
 ```
 
-### 7.3 Experience Extractor
+### 8.3 Experience Extractor
 
 Fields:
 
@@ -407,7 +511,7 @@ Prompt user body:
 bullet 要保留事实密度，优先包含用户贡献、方法、对象和结果；不要把强 bullet 改写成空泛职责。
 ```
 
-### 7.4 Project Extractor
+### 8.4 Project Extractor
 
 Fields:
 
@@ -462,7 +566,7 @@ Prompt user body:
 }
 ```
 
-### 7.5 Education Extractor
+### 8.5 Education Extractor
 
 Fields:
 
@@ -517,7 +621,7 @@ Prompt user body:
 }
 ```
 
-### 7.6 Course Extractor
+### 8.6 Course Extractor
 
 Fields:
 
@@ -562,7 +666,7 @@ Prompt user body:
 }
 ```
 
-### 7.7 Award And Competition Extractor
+### 8.7 Award And Competition Extractor
 
 Fields:
 
@@ -607,7 +711,7 @@ Prompt user body:
 }
 ```
 
-### 7.8 Skills Extractor
+### 8.8 Skills Extractor
 
 Fields:
 
@@ -646,7 +750,7 @@ Prompt user body:
 }
 ```
 
-### 7.9 Certification Extractor
+### 8.9 Certification Extractor
 
 Fields:
 
@@ -691,7 +795,7 @@ Prompt user body:
 }
 ```
 
-### 7.10 Research Extractor
+### 8.10 Research Extractor
 
 Fields:
 
@@ -738,7 +842,7 @@ Prompt user body:
 }
 ```
 
-### 7.11 Language Extractor
+### 8.11 Language Extractor
 
 Fields:
 
@@ -777,7 +881,7 @@ Prompt user body:
 }
 ```
 
-## 8. Layer 3: Event-Level Duplicate Detection And Merge
+## 9. Layer 3: Event-Level Duplicate Detection And Merge
 
 ### Purpose
 
@@ -844,9 +948,78 @@ For first implementation:
 - Draft events may be auto-updated.
 - Confirmed events are not overwritten silently.
 - If a new event matches a confirmed event, attach source/evidence and only add clearly missing non-conflicting fields.
-- Conflicting fields are stored in `details.needs_review_fields` or `details.open_questions`, not exposed as a separate queue.
+- Conflicting fields should create an event update patch, not silently overwrite the confirmed event.
 
-## 9. Data Model Direction
+## 10. Event Update Diff And Undo
+
+### Purpose
+
+When new material updates an existing event, the user should see a simple field-level diff, not an internal merge queue. The right-side profile remains the main surface.
+
+User-visible behavior:
+
+```text
+Existing event remains visible
+-> event shows "有更新建议"
+-> click opens a diff modal
+-> user accepts, rejects, edits manually, or leaves it for later
+```
+
+### Patch Object
+
+Use an internal `EventUpdatePatch` model or metadata-backed equivalent in the first implementation.
+
+```json
+{
+  "id": "patch_123",
+  "event_id": "evt_123",
+  "source_ids": ["src_123"],
+  "status": "pending | accepted | rejected | reverted",
+  "patch_type": "update_event",
+  "before": {},
+  "after": {},
+  "diff": [
+    {
+      "field": "details.bullets",
+      "change_type": "add | remove | replace",
+      "old_value": null,
+      "new_value": "支持项目、任务、人员信息的自然语言查询与可视化报告生成。"
+    }
+  ],
+  "reason": "新上传的项目说明补充了技术栈和结果描述"
+}
+```
+
+### When To Create A Patch
+
+- New event: create `CareerEvent(status="draft")`, no diff needed.
+- Exact duplicate: skip or attach evidence, no diff needed.
+- Draft event with low-risk additions: auto-apply but save reversible patch history.
+- Confirmed event: create pending diff patch; do not overwrite silently.
+- Likely duplicate with meaningful differences: create pending diff patch.
+
+### Diff Display
+
+The frontend should display field-level changes, not code-style line diffs:
+
+```text
+要点
++ 支持项目、任务、人员信息的自然语言查询与可视化报告生成。
+~ 将“提升效率”改为“提升信息检索与决策效率”。
+
+技能
++ LangGraph
++ Tool Calling
+```
+
+Actions:
+
+- Accept: apply `after` to the event and mark patch `accepted`.
+- Reject: keep current event and mark patch `rejected`.
+- Edit manually: open event editor with suggested fields prefilled.
+- Undo accepted update: restore `before` snapshot and mark patch `reverted`.
+
+## 11. Data Model Direction
 
 First implementation should avoid adding too many permanent tables. Use existing `SourceMaterial`, `BackgroundJob`, `CareerEvent`, `Claim`, and `Evidence`.
 
@@ -880,43 +1053,70 @@ Store:
 - `canonical_key`
 - `needs_review_fields`
 - `open_questions`
+- `pending_patch_ids`
+- `last_applied_patch_id`
 
-Later, if this grows, split into real `ParseBatch`, `SourceSectionMap`, and `ExtractedEvent` tables.
+### `EventUpdatePatch`
 
-## 10. Implementation Phases
+For the first version this can be stored as JSON in a lightweight table or as metadata attached to the event. If update suggestions become central to the UI, promote it to a real table with:
 
-### Phase 1: Prompt Boundary And Internal Types
+- id
+- user_id
+- event_id
+- source_ids
+- status
+- before_json
+- after_json
+- diff_json
+- reason
+- created_at
+- applied_at
+- reverted_at
+
+Later, if this grows, split into real `ParseBatch`, `SourceSectionMap`, `ExtractedEvent`, and `EventUpdatePatch` tables.
+
+## 12. Implementation Phases
+
+### Phase 1: Section Schema Registry
+
+- Add `vault_section_schema.py`.
+- Define section fields, meanings, output paths, dedupe fields, and prompt rendering helpers.
+- Make prompt builders consume schema output instead of hand-written field blocks.
+
+### Phase 2: Prompt Boundary And Internal Types
 
 - Add internal schemas for layer 1 and layer 2 outputs.
 - Keep persistence mostly unchanged.
 - Add prompt builders for source detection and section extraction.
 - Add deterministic normalizers and canonical keys.
 
-### Phase 2: Single-Source Layer 1
+### Phase 3: Single-Source Layer 1
 
 - Convert each file/text/url into independent SourceMaterial.
 - Run source-level detection per source.
 - Store section_map in SourceMaterial metadata.
 
-### Phase 3: Section Extractors
+### Phase 4: Section Extractors
 
 - Group source spans by section.
 - Implement extractors for profile, summary, experience, projects, education, courses, awards, skills first.
 - Keep certifications, research, languages available but lower priority.
 
-### Phase 4: Event-Level Dedup
+### Phase 5: Event-Level Dedup And Patches
 
 - Add deterministic duplicate detection.
 - Add AI pair merge only for likely duplicates.
 - Ensure repeated same resume upload does not duplicate work/project/education/course events.
+- Generate field-level update patches for confirmed events and risky updates.
 
-### Phase 5: UX Cleanup
+### Phase 6: UX Cleanup
 
 - Keep the user flow unchanged: input -> parse -> right side profile.
 - Show only high-level status: parsing, failed, completed.
+- Show update suggestions only as simple event-level diff badges and modals.
 - Do not expose source maps, candidates, merge decisions, or conflict queues.
 
-## 11. Evaluation Fixtures
+## 13. Evaluation Fixtures
 
 Required test fixtures:
 
@@ -926,6 +1126,8 @@ Required test fixtures:
 - school honors that must appear in education.honors and awards
 - link that fails to fetch
 - text material with AI instruction “only parse courses”
+- confirmed event updated by new source creates pending diff patch instead of silent overwrite
+- accepted patch can be reverted to the before snapshot
 
 Pass conditions:
 
@@ -934,10 +1136,21 @@ Pass conditions:
 - School honors remain inside education and also appear in awards.
 - User-facing status remains simple.
 - Existing right-side profile rendering continues to work.
+- Confirmed events are not silently overwritten.
+- User can accept/reject/revert AI update suggestions.
 
-## 12. Immediate Next Task
+## 14. Immediate Next Task
 
-Implement the backend pipeline skeleton first:
+Implement the backend schema registry first:
+
+```text
+vault_section_schema.py
+schema-driven prompt rendering
+schema-driven output shape
+schema-driven canonical key fields
+```
+
+Then implement the pipeline skeleton:
 
 ```text
 source detection prompt
