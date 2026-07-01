@@ -194,3 +194,97 @@ def test_execute_job_marks_source_failed_when_provider_fails(monkeypatch, tmp_pa
         assert source.parse_error == "quota exceeded"
         assert job.status == "failed"
         assert job.error_message == "quota exceeded"
+
+
+def test_dry_run_defaults_to_disabled(monkeypatch):
+    monkeypatch.delenv("AI_PARSE_DRY_RUN", raising=False)
+
+    assert ai_worker._dry_run_enabled() is False
+
+
+def test_execute_job_marks_source_failed_when_dry_run_is_enabled(monkeypatch, tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'worker-dry-run.db'}", echo=False)
+    SQLModel.metadata.create_all(engine)
+    monkeypatch.setattr(ai_worker, "engine", engine)
+
+    with Session(engine) as session:
+        user = User(email="worker-dry-run@example.com", display_name="Worker Dry Run")
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+
+        source = SourceMaterial(
+            user_id=user.id,
+            source_type="text",
+            title="简历片段",
+            raw_text="负责增长实验设计",
+            parse_status="uploaded",
+        )
+        session.add(source)
+        session.commit()
+        session.refresh(source)
+
+        job = BackgroundJob(
+            user_id=user.id,
+            job_type="source_parse",
+            payload={"source_id": str(source.id), "text": source.raw_text},
+            status="queued",
+        )
+        session.add(job)
+        session.commit()
+        session.refresh(job)
+
+        monkeypatch.setattr(ai_worker, "DRY_RUN", True)
+
+        ai_worker._execute_job(session, job)
+
+        session.refresh(source)
+        session.refresh(job)
+
+        assert source.parse_status == "failed"
+        assert "AI_PARSE_DRY_RUN" in source.parse_error
+        assert job.status == "failed"
+        assert "AI_PARSE_DRY_RUN" in job.error_message
+
+
+def test_execute_job_marks_source_failed_when_text_is_empty(monkeypatch, tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'worker-empty-text.db'}", echo=False)
+    SQLModel.metadata.create_all(engine)
+    monkeypatch.setattr(ai_worker, "engine", engine)
+
+    with Session(engine) as session:
+        user = User(email="worker-empty@example.com", display_name="Worker Empty")
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+
+        source = SourceMaterial(
+            user_id=user.id,
+            source_type="file",
+            title="empty.pdf",
+            raw_text="",
+            parse_status="uploaded",
+        )
+        session.add(source)
+        session.commit()
+        session.refresh(source)
+
+        job = BackgroundJob(
+            user_id=user.id,
+            job_type="source_parse",
+            payload={"source_id": str(source.id)},
+            status="queued",
+        )
+        session.add(job)
+        session.commit()
+        session.refresh(job)
+
+        ai_worker._execute_job(session, job)
+
+        session.refresh(source)
+        session.refresh(job)
+
+        assert source.parse_status == "failed"
+        assert "未提取到可解析文本" in source.parse_error
+        assert job.status == "failed"
+        assert "未提取到可解析文本" in job.error_message

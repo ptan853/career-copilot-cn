@@ -28,7 +28,13 @@ from services.source_parse import normalize_source_parse
 logger = logging.getLogger("ai_worker")
 
 POLL_INTERVAL_SECONDS = 5
-DRY_RUN = os.getenv("AI_PARSE_DRY_RUN", "true").lower() in ("1", "true", "yes")
+
+
+def _dry_run_enabled() -> bool:
+    return os.getenv("AI_PARSE_DRY_RUN", "false").lower() in ("1", "true", "yes")
+
+
+DRY_RUN = _dry_run_enabled()
 
 # URL 正则
 URL_PATTERN = re.compile(r'https?://[^\s<>"{}|\\^`\[\]]+')
@@ -135,9 +141,14 @@ def _execute_job(session: Session, job: BackgroundJob) -> None:
         text = _scan_and_fetch(text)
 
     if not text.strip():
-        job.status = "succeeded"
-        job.progress_message = "无文本内容，跳过解析"
+        message = "未提取到可解析文本，请上传可复制文本的 PDF/Word，或直接粘贴文字内容。"
+        source.parse_status = "failed"
+        source.parse_error = message
+        job.status = "failed"
+        job.progress_message = message
+        job.error_message = message
         job.completed_at = datetime.utcnow()
+        session.add(source)
         session.add(job)
         session.commit()
         return
@@ -147,13 +158,18 @@ def _execute_job(session: Session, job: BackgroundJob) -> None:
     session.commit()
 
     if DRY_RUN:
-        job.status = "succeeded"
-        job.progress_message = "DRY_RUN：跳过 AI 调用"
+        message = "AI_PARSE_DRY_RUN 已开启，系统跳过了真实 AI 解析。请关闭 dry-run 后重试。"
+        source.parse_status = "failed"
+        source.parse_error = message
+        job.status = "failed"
+        job.progress_message = message
+        job.error_message = message
         job.result = {"events": 0, "claims": 0, "dry_run": True}
         job.completed_at = datetime.utcnow()
+        session.add(source)
         session.add(job)
         session.commit()
-        logger.info("job %s dry-run complete", job.id)
+        logger.info("job %s dry-run blocked real parsing", job.id)
         return
 
     try:
