@@ -14,6 +14,7 @@ import {
   confirmEvent,
   deleteEvent,
   getProfile,
+  updateProfile,
   type VaultEvent,
   type VaultSection,
 } from '@/lib/api-client'
@@ -100,6 +101,17 @@ type ProfileData = {
   years_of_experience?: number | null
 }
 
+type ProfileForm = {
+  full_name: string
+  headline: string
+  email: string
+  phone: string
+  location: string
+  link_label: string
+  link_url: string
+  years_of_experience: string
+}
+
 type EventForm = {
   title: string
   event_type: string
@@ -177,6 +189,37 @@ function emptyEventForm(eventType = 'work'): EventForm {
   }
 }
 
+function profileToForm(profile: ProfileData | null): ProfileForm {
+  const primaryLink = profile?.links?.find((link) => link.url)
+  return {
+    full_name: profile?.full_name || '',
+    headline: profile?.headline || '',
+    email: profile?.emails?.[0] || '',
+    phone: profile?.phones?.[0] || '',
+    location: profile?.location || '',
+    link_label: primaryLink?.label || '',
+    link_url: primaryLink?.url || '',
+    years_of_experience: typeof profile?.years_of_experience === 'number' ? String(profile.years_of_experience) : '',
+  }
+}
+
+function profilePayloadFromForm(form: ProfileForm) {
+  const years = Number.parseInt(form.years_of_experience, 10)
+  const links = form.link_url.trim()
+    ? [{ label: form.link_label.trim() || '个人链接', url: form.link_url.trim() }]
+    : []
+
+  return {
+    full_name: form.full_name.trim() || null,
+    headline: form.headline.trim() || null,
+    emails: form.email.trim() ? [form.email.trim()] : [],
+    phones: form.phone.trim() ? [form.phone.trim()] : [],
+    location: form.location.trim() || null,
+    links,
+    years_of_experience: Number.isFinite(years) ? years : null,
+  }
+}
+
 function splitTags(value: string) {
   return value.split(/[，,]/).map((tag) => tag.trim()).filter(Boolean)
 }
@@ -250,6 +293,8 @@ export default function VaultPage() {
   const [sourcesLoading, setSourcesLoading] = useState(true)
   const [sections, setSections] = useState<VaultSection[]>([])
   const [profile, setProfile] = useState<ProfileData | null>(null)
+  const [profileForm, setProfileForm] = useState<ProfileForm>(profileToForm(null))
+  const [showProfileModal, setShowProfileModal] = useState(false)
   const [loading, setLoading] = useState(true)
   const [activeEvent, setActiveEvent] = useState<VaultEvent | null>(null)
   const [eventForm, setEventForm] = useState<EventForm | null>(null)
@@ -444,6 +489,22 @@ export default function VaultPage() {
   function openEvent(event: VaultEvent) {
     setActiveEvent(event)
     setEventForm(eventToForm(event))
+  }
+
+  function openProfileEditor() {
+    setProfileForm(profileToForm(profile))
+    setShowProfileModal(true)
+  }
+
+  async function saveProfile() {
+    try {
+      const response: any = await updateProfile(profilePayloadFromForm(profileForm))
+      setProfile(response.data || null)
+      setShowProfileModal(false)
+      setStatusMessage('个人资料已保存')
+    } catch (error: any) {
+      setStatusMessage(error?.message || '个人资料保存失败')
+    }
   }
 
   async function saveEvent() {
@@ -643,7 +704,7 @@ export default function VaultPage() {
           </div>
         </div>
 
-        <ProfileHeader profile={profile} />
+        <ProfileHeader profile={profile} onEdit={openProfileEditor} />
 
         {profile?.summary && (
           <div className="resume-section resume-summary">
@@ -709,17 +770,27 @@ export default function VaultPage() {
           saveLabel="创建条目"
         />
       )}
+
+      {showProfileModal && (
+        <ProfileModal
+          form={profileForm}
+          onChange={setProfileForm}
+          onClose={() => setShowProfileModal(false)}
+          onSave={saveProfile}
+        />
+      )}
     </div>
   )
 }
 
-function ProfileHeader({ profile }: { profile: ProfileData | null }) {
+function ProfileHeader({ profile, onEdit }: { profile: ProfileData | null; onEdit: () => void }) {
   const primaryEmail = profile?.emails?.[0]
   const primaryPhone = profile?.phones?.[0]
   const primaryLink = profile?.links?.find((link) => link.url)
 
   return (
     <div className="resume-hero">
+      <button className="resume-hero-edit" onClick={onEdit} aria-label="编辑个人资料">✎</button>
       <div>
         <h2>{profile?.full_name || '你的姓名'}</h2>
         <p>{profile?.headline || '添加材料后，AI 会整理你的职业身份'}</p>
@@ -730,6 +801,48 @@ function ProfileHeader({ profile }: { profile: ProfileData | null }) {
         {primaryPhone && <span>{primaryPhone}</span>}
         {profile?.location && <span>{profile.location}</span>}
         {primaryLink?.url && <a href={primaryLink.url} target="_blank" rel="noreferrer">{primaryLink.label || '个人链接'}</a>}
+      </div>
+    </div>
+  )
+}
+
+function ProfileModal({
+  form,
+  onChange,
+  onClose,
+  onSave,
+}: {
+  form: ProfileForm
+  onChange: (form: ProfileForm) => void
+  onClose: () => void
+  onSave: () => void
+}) {
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="event-modal profile-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">个人资料</p>
+            <h2>编辑 Profile</h2>
+          </div>
+          <button onClick={onClose}>关闭</button>
+        </div>
+
+        <div className="modal-grid">
+          <label>姓名<input value={form.full_name} onChange={(event) => onChange({ ...form, full_name: event.target.value })} /></label>
+          <label>职业标题<input value={form.headline} onChange={(event) => onChange({ ...form, headline: event.target.value })} placeholder="例如：Agent 算法工程师" /></label>
+          <label>邮箱<input value={form.email} onChange={(event) => onChange({ ...form, email: event.target.value })} /></label>
+          <label>电话<input value={form.phone} onChange={(event) => onChange({ ...form, phone: event.target.value })} /></label>
+          <label>地点<input value={form.location} onChange={(event) => onChange({ ...form, location: event.target.value })} /></label>
+          <label>工作年限<input value={form.years_of_experience} onChange={(event) => onChange({ ...form, years_of_experience: event.target.value })} placeholder="例如：1" /></label>
+          <label>链接名称<input value={form.link_label} onChange={(event) => onChange({ ...form, link_label: event.target.value })} placeholder="GitHub / 作品集" /></label>
+          <label>链接地址<input value={form.link_url} onChange={(event) => onChange({ ...form, link_url: event.target.value })} placeholder="https://..." /></label>
+        </div>
+
+        <div className="modal-actions">
+          <button onClick={onClose}>取消</button>
+          <button onClick={onSave} className="primary">保存资料</button>
+        </div>
       </div>
     </div>
   )
