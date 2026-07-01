@@ -226,6 +226,7 @@ function ModalPortal({ children }: { children: ReactNode }) {
 
 function eventToForm(event: VaultEvent): EventForm {
   const details = { ...EMPTY_DETAILS, ...(event.details_json || {}) }
+  const safeTags = Array.isArray(event.tags) ? event.tags : (typeof event.tags === 'string' ? (event.tags as string).split(/[，,]/).map((tag: string) => tag.trim()).filter(Boolean) : [])
   return {
     section_type: getLiteSectionType(event),
     title: event.title || '',
@@ -239,7 +240,7 @@ function eventToForm(event: VaultEvent): EventForm {
     description: event.description || '',
     visibility: event.visibility || 'private',
     status: event.status || 'draft',
-    tags_text: (event.tags || []).join('，'),
+    tags_text: safeTags.join('，'),
     bullets_text: getStringList(details.bullets).join('\n'),
     skills_text: getStringList(details.skills).join('，'),
     tech_stack_text: getStringList(details.tech_stack).join('，'),
@@ -732,8 +733,19 @@ export default function VaultPage() {
   }
 
   function openEvent(event: VaultEvent) {
-    setActiveEvent(event)
-    setEventForm(eventToForm(event))
+    try {
+      const form = eventToForm(event)
+      setActiveEvent(event)
+      setEventForm(form)
+    } catch (error) {
+      console.error('Failed to open event for editing:', error)
+      setStatusMessage('无法打开编辑框，数据格式可能有问题，请刷新后重试。')
+    }
+  }
+
+  function closeEventModal() {
+    setActiveEvent(null)
+    setEventForm(null)
   }
 
   function openProfileEditor() {
@@ -1046,7 +1058,7 @@ export default function VaultPage() {
           title="编辑档案条目"
           form={eventForm}
           onChange={setEventForm}
-          onClose={() => setActiveEvent(null)}
+          onClose={closeEventModal}
           onDelete={deleteActiveEvent}
           onSave={saveEvent}
           onConfirm={activeEvent.status === 'confirmed' ? undefined : confirmActiveEvent}
