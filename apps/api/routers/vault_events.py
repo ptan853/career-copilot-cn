@@ -10,11 +10,12 @@ from typing import Optional
 from database import get_session
 from models import CareerEvent, Claim, Evidence
 from auth_deps import get_current_user_id
+from services.profile_schema import PROFILE_SECTION_ORDER
 from services.source_parse import event_type_to_section
 
 router = APIRouter(prefix="/api/vault/events", tags=["vault-events"])
 
-SECTION_ORDER = ["work", "project", "education", "credential", "research", "portfolio", "skill", "custom"]
+SECTION_ORDER = PROFILE_SECTION_ORDER
 
 
 class CreateEventBody(BaseModel):

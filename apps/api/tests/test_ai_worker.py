@@ -76,7 +76,12 @@ def test_execute_job_persists_events_claims_evidence_and_metadata(monkeypatch, t
                                         "organization": "字节跳动",
                                         "time_start": "2024-06",
                                         "time_end": "2025-03",
-                                        "details": {"context": "增长场景", "needs_review_fields": ["outcome"]},
+                                        "details": {
+                                            "bullets": ["参与增长实验设计，推动转化效率优化。"],
+                                            "skills": ["增长实验"],
+                                            "context": "增长场景",
+                                            "needs_review_fields": ["outcome"],
+                                        },
                                         "claims": [
                                             {
                                                 "claim_text": "参与增长实验设计。",
@@ -121,9 +126,11 @@ def test_execute_job_persists_events_claims_evidence_and_metadata(monkeypatch, t
         assert source.metadata_json["parse_model"] == "qwen-plus"
         assert job.status == "succeeded"
         assert event.status == "draft"
+        assert event.details_json["bullets"] == ["参与增长实验设计，推动转化效率优化。"]
+        assert event.details_json["skills"] == ["增长实验"]
         assert event.details_json["context"] == "增长场景"
         assert event.details_json["needs_review_fields"] == ["outcome"]
-        assert event.details_json["section_type"] == "work"
+        assert event.details_json["section_type"] == "experience"
         assert claim.claim_text == "参与增长实验设计。"
         assert event_evidence.quote == "负责增长实验设计"
         assert event_evidence.locator_json == {"page": 1}

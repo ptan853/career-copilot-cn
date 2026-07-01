@@ -3,6 +3,8 @@
 from dataclasses import dataclass, field
 from typing import Any
 
+from services.profile_schema import event_type_to_profile_section, normalize_lite_details
+
 
 VALID_EVENT_TYPES = {
     "work", "internship", "project", "education", "certification", "award",
@@ -16,23 +18,29 @@ VALID_CLAIM_TYPES = {
 
 VALID_STRENGTHS = {"confirmed", "inferred", "weak"}
 VALID_TIME_PRECISIONS = {"day", "month", "year", "unknown"}
-VALID_SECTION_TYPES = {"work", "project", "education", "credential", "research", "portfolio", "skill", "custom"}
-SECTION_BY_EVENT_TYPE = {
-    "work": ("work", "工作经历"),
-    "internship": ("work", "工作经历"),
-    "project": ("project", "项目经历"),
-    "startup": ("project", "项目经历"),
-    "education": ("education", "教育背景"),
-    "course": ("education", "教育背景"),
-    "award": ("credential", "奖项证书"),
-    "certification": ("credential", "奖项证书"),
-    "competition": ("credential", "奖项证书"),
-    "publication": ("research", "研究/论文"),
-    "patent": ("research", "研究/论文"),
-    "open_source": ("portfolio", "开源/作品"),
-    "language": ("skill", "技能与偏好"),
-    "volunteer": ("custom", "自定义"),
-    "custom": ("custom", "自定义"),
+VALID_SECTION_TYPES = {
+    "summary", "experience", "projects", "education", "skills", "awards",
+    "certifications", "research", "other", "languages", "custom",
+}
+LEGACY_SECTION_TYPE_MAP = {
+    "work": "experience",
+    "project": "projects",
+    "credential": "certifications",
+    "portfolio": "projects",
+    "skill": "skills",
+    "custom": "other",
+}
+SECTION_TITLE_BY_TYPE = {
+    "summary": "专业摘要",
+    "experience": "工作/实习",
+    "projects": "项目",
+    "education": "教育",
+    "skills": "技能",
+    "awards": "奖项",
+    "certifications": "证书/课程",
+    "research": "论文/专利",
+    "other": "志愿/社团/其他",
+    "languages": "语言",
 }
 
 
@@ -84,15 +92,20 @@ class NormalizedParseResult:
 
 
 def event_type_to_section(event_type: str) -> dict[str, str]:
-    section_type, section_title = SECTION_BY_EVENT_TYPE.get(
-        event_type,
-        SECTION_BY_EVENT_TYPE["custom"],
-    )
-    return {"section_type": section_type, "section_title": section_title}
+    section = event_type_to_profile_section(event_type)
+    return {"section_type": section.section_type, "section_title": section.section_title}
 
 
 def _safe_enum(value: Any, allowed: set[str], fallback: str) -> str:
     return value if isinstance(value, str) and value in allowed else fallback
+
+
+def _safe_section_type(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    if value in VALID_SECTION_TYPES:
+        return value
+    return LEGACY_SECTION_TYPE_MAP.get(value, "")
 
 
 def _clean_string(value: Any) -> str | None:
@@ -104,14 +117,8 @@ def _clean_string(value: Any) -> str | None:
 
 def _details(raw: dict[str, Any]) -> dict[str, Any]:
     details = raw.get("details") if isinstance(raw.get("details"), dict) else {}
-    return {
-        "context": _clean_string(details.get("context")) or "",
-        "contribution": _clean_string(details.get("contribution")) or "",
-        "implementation": _clean_string(details.get("implementation")) or "",
-        "outcome": _clean_string(details.get("outcome")) or "",
-        "open_questions": details.get("open_questions") if isinstance(details.get("open_questions"), list) else [],
-        "needs_review_fields": details.get("needs_review_fields") if isinstance(details.get("needs_review_fields"), list) else [],
-    }
+    event_type = _safe_enum(raw.get("event_type"), VALID_EVENT_TYPES, "custom")
+    return normalize_lite_details(event_type, details)
 
 
 def normalize_source_parse(raw: dict[str, Any]) -> NormalizedParseResult:
@@ -132,11 +139,11 @@ def normalize_source_parse(raw: dict[str, Any]) -> NormalizedParseResult:
                 continue
             event_type = _safe_enum(raw_event.get("event_type"), VALID_EVENT_TYPES, "custom")
             mapped = event_type_to_section(event_type)
-            raw_section_type = _safe_enum(section.get("section_type"), VALID_SECTION_TYPES, "")
+            raw_section_type = _safe_section_type(section.get("section_type"))
             raw_section_title = _clean_string(section.get("section_title"))
             if event_type == "custom" and raw_section_type and raw_section_title:
                 section_type = raw_section_type
-                section_title = raw_section_title
+                section_title = SECTION_TITLE_BY_TYPE.get(raw_section_type, raw_section_title)
             else:
                 section_type = mapped["section_type"]
                 section_title = mapped["section_title"]

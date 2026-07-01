@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   clearVault,
   createSource,
@@ -13,14 +13,21 @@ import {
   updateEvent,
   confirmEvent,
   deleteEvent,
-  getClaims,
-  createClaim,
-  updateClaim,
-  deleteClaim,
+  getProfile,
   type VaultEvent,
   type VaultSection,
-  type VaultClaim,
 } from '@/lib/api-client'
+import {
+  getBullets,
+  getLiteSectionTitle,
+  getLiteSectionType,
+  getSkills,
+  getStringList,
+  getTechStack,
+  joinDateRange,
+  PROFILE_SECTION_ORDER,
+  splitMultilineList,
+} from '@/lib/vault-lite-schema'
 
 const STATUS_LABELS: Record<string, string> = {
   draft: '待确认',
@@ -35,24 +42,35 @@ const EVENT_TYPE_OPTIONS = [
   ['project', '项目'],
   ['education', '教育'],
   ['certification', '证书'],
+  ['course', '课程'],
   ['award', '奖项'],
+  ['competition', '竞赛'],
   ['publication', '论文/发表'],
+  ['patent', '专利'],
   ['open_source', '开源'],
   ['startup', '创业'],
+  ['volunteer', '志愿/社团'],
   ['language', '语言'],
-  ['custom', '自定义'],
+  ['custom', '其他'],
 ]
 
 const EMPTY_DETAILS = {
+  bullets: [] as string[],
+  skills: [] as string[],
+  tech_stack: [] as string[],
+  url: '',
+  field: '',
+  gpa: '',
+  honors: [] as string[],
+  authors: [] as string[],
+  proficiency: '',
   context: '',
   contribution: '',
   implementation: '',
   outcome: '',
-  open_questions: [],
-  needs_review_fields: [],
+  open_questions: [] as string[],
+  needs_review_fields: [] as string[],
 }
-
-type EventForm = ReturnType<typeof eventToForm>
 
 type SourceItem = {
   id: string
@@ -71,7 +89,43 @@ type PendingFile = {
   error?: string
 }
 
-function eventToForm(event: VaultEvent) {
+type ProfileData = {
+  full_name?: string | null
+  headline?: string | null
+  emails?: string[]
+  phones?: string[]
+  location?: string | null
+  links?: Array<{ label?: string; url?: string }>
+  summary?: string | null
+  years_of_experience?: number | null
+}
+
+type EventForm = {
+  title: string
+  event_type: string
+  role: string
+  organization: string
+  location: string
+  time_start: string
+  time_end: string
+  time_precision: string
+  description: string
+  visibility: string
+  status: string
+  tags_text: string
+  bullets_text: string
+  skills_text: string
+  tech_stack_text: string
+  url: string
+  field: string
+  gpa: string
+  honors_text: string
+  authors_text: string
+  proficiency: string
+}
+
+function eventToForm(event: VaultEvent): EventForm {
+  const details = { ...EMPTY_DETAILS, ...(event.details_json || {}) }
   return {
     title: event.title || '',
     event_type: event.event_type || 'custom',
@@ -85,7 +139,41 @@ function eventToForm(event: VaultEvent) {
     visibility: event.visibility || 'private',
     status: event.status || 'draft',
     tags_text: (event.tags || []).join('，'),
-    details: { ...EMPTY_DETAILS, ...(event.details_json || {}) },
+    bullets_text: getStringList(details.bullets).join('\n'),
+    skills_text: getStringList(details.skills).join('，'),
+    tech_stack_text: getStringList(details.tech_stack).join('，'),
+    url: typeof details.url === 'string' ? details.url : '',
+    field: typeof details.field === 'string' ? details.field : '',
+    gpa: typeof details.gpa === 'string' ? details.gpa : '',
+    honors_text: getStringList(details.honors).join('，'),
+    authors_text: getStringList(details.authors).join('，'),
+    proficiency: typeof details.proficiency === 'string' ? details.proficiency : '',
+  }
+}
+
+function emptyEventForm(eventType = 'work'): EventForm {
+  return {
+    title: '',
+    event_type: eventType,
+    role: '',
+    organization: '',
+    location: '',
+    time_start: '',
+    time_end: '',
+    time_precision: 'month',
+    description: '',
+    visibility: 'private',
+    status: 'draft',
+    tags_text: '',
+    bullets_text: '',
+    skills_text: '',
+    tech_stack_text: '',
+    url: '',
+    field: '',
+    gpa: '',
+    honors_text: '',
+    authors_text: '',
+    proficiency: '',
   }
 }
 
@@ -93,9 +181,29 @@ function splitTags(value: string) {
   return value.split(/[，,]/).map((tag) => tag.trim()).filter(Boolean)
 }
 
-function confidenceLabel(value?: number | null) {
-  if (typeof value !== 'number') return '--'
-  return `${Math.round(value * 100)}%`
+function listFromCommaText(value: string) {
+  return value.split(/[，,]/).map((item) => item.trim()).filter(Boolean)
+}
+
+function detailsFromForm(form: EventForm) {
+  const details: Record<string, any> = {}
+  const bullets = splitMultilineList(form.bullets_text)
+  const skills = listFromCommaText(form.skills_text)
+  const techStack = listFromCommaText(form.tech_stack_text)
+  const honors = listFromCommaText(form.honors_text)
+  const authors = listFromCommaText(form.authors_text)
+
+  if (bullets.length) details.bullets = bullets
+  if (skills.length) details.skills = skills
+  if (techStack.length) details.tech_stack = techStack
+  if (honors.length) details.honors = honors
+  if (authors.length) details.authors = authors
+  if (form.url.trim()) details.url = form.url.trim()
+  if (form.field.trim()) details.field = form.field.trim()
+  if (form.gpa.trim()) details.gpa = form.gpa.trim()
+  if (form.proficiency.trim()) details.proficiency = form.proficiency.trim()
+
+  return details
 }
 
 function formatFileSize(bytes: number) {
@@ -112,6 +220,24 @@ function sourceStatusLabel(status: string) {
   return '队列中'
 }
 
+function sectionSortValue(sectionType: string) {
+  const index = PROFILE_SECTION_ORDER.indexOf(sectionType)
+  return index === -1 ? 999 : index
+}
+
+function groupForResume(sections: VaultSection[]) {
+  const groups = new Map<string, VaultEvent[]>()
+  for (const section of sections) {
+    for (const event of section.events || []) {
+      const sectionType = getLiteSectionType(event)
+      groups.set(sectionType, [...(groups.get(sectionType) || []), event])
+    }
+  }
+  return [...groups.entries()]
+    .map(([section_type, events]) => ({ section_type, section_title: getLiteSectionTitle(section_type), events }))
+    .sort((a, b) => sectionSortValue(a.section_type) - sectionSortValue(b.section_type))
+}
+
 export default function VaultPage() {
   const [text, setText] = useState('')
   const [urls, setUrls] = useState('')
@@ -123,29 +249,25 @@ export default function VaultPage() {
   const [sources, setSources] = useState<SourceItem[]>([])
   const [sourcesLoading, setSourcesLoading] = useState(true)
   const [sections, setSections] = useState<VaultSection[]>([])
+  const [profile, setProfile] = useState<ProfileData | null>(null)
   const [loading, setLoading] = useState(true)
   const [activeEvent, setActiveEvent] = useState<VaultEvent | null>(null)
   const [eventForm, setEventForm] = useState<EventForm | null>(null)
-  const [claims, setClaims] = useState<VaultClaim[]>([])
-  const [newClaimText, setNewClaimText] = useState('')
   const [showNewEventModal, setShowNewEventModal] = useState(false)
   const [clearingVault, setClearingVault] = useState(false)
-  const [newEventForm, setNewEventForm] = useState<EventForm>({
-    title: '',
-    event_type: 'work',
-    role: '',
-    organization: '',
-    location: '',
-    time_start: '',
-    time_end: '',
-    time_precision: 'month',
-    description: '',
-    visibility: 'private',
-    status: 'draft',
-    tags_text: '',
-    details: { ...EMPTY_DETAILS },
-  })
+  const [newEventForm, setNewEventForm] = useState<EventForm>(emptyEventForm())
   const fileRef = useRef<HTMLInputElement>(null)
+
+  const resumeSections = useMemo(() => groupForResume(sections), [sections])
+
+  async function loadProfile() {
+    try {
+      const response: any = await getProfile()
+      setProfile(response.data || null)
+    } catch {
+      setProfile(null)
+    }
+  }
 
   async function loadSections() {
     setLoading(true)
@@ -187,6 +309,7 @@ export default function VaultPage() {
   }
 
   useEffect(() => {
+    loadProfile()
     loadSections()
     loadSources()
     const sectionTimer = window.setInterval(loadSections, 5000)
@@ -270,7 +393,7 @@ export default function VaultPage() {
         await submitTextSource({ silent: true })
       }
 
-      setStatusMessage('材料已提交，系统正在解析。下方会自动刷新状态。')
+      setStatusMessage('材料已提交，系统正在解析。右侧会自动刷新。')
       await loadSources()
       await loadSections()
     } catch (error: any) {
@@ -280,7 +403,7 @@ export default function VaultPage() {
     }
   }
 
-  async function removePendingFile(id: string) {
+  function removePendingFile(id: string) {
     setPendingFiles((current) => current.filter((item) => item.id !== id))
   }
 
@@ -297,7 +420,7 @@ export default function VaultPage() {
   }
 
   async function clearCurrentVault() {
-    if (!window.confirm('这将清空所有职业档案、经历事件、claims、evidence 和源材料记录。此操作不可恢复。')) return
+    if (!window.confirm('这将清空所有职业档案、经历事件、证据和源材料记录。此操作不可恢复。')) return
     setClearingVault(true)
     try {
       await clearVault()
@@ -306,7 +429,9 @@ export default function VaultPage() {
       setSections([])
       setActiveEvent(null)
       setEventForm(null)
+      setProfile(null)
       setStatusMessage('职业档案已清空')
+      await loadProfile()
       await loadSources()
       await loadSections()
     } catch (error: any) {
@@ -316,15 +441,9 @@ export default function VaultPage() {
     }
   }
 
-  async function openEvent(event: VaultEvent) {
+  function openEvent(event: VaultEvent) {
     setActiveEvent(event)
     setEventForm(eventToForm(event))
-    try {
-      const response: any = await getClaims({ event_id: event.id })
-      setClaims(response.data || [])
-    } catch {
-      setClaims([])
-    }
   }
 
   async function saveEvent() {
@@ -339,12 +458,12 @@ export default function VaultPage() {
       time_end: eventForm.time_end || null,
       time_precision: eventForm.time_precision,
       description: eventForm.description || null,
-      details_json: eventForm.details,
+      details_json: detailsFromForm(eventForm),
       tags: splitTags(eventForm.tags_text),
       visibility: eventForm.visibility,
       status: eventForm.status,
     })
-    setStatusMessage('事件已保存')
+    setStatusMessage('已保存')
     await loadSections()
   }
 
@@ -358,7 +477,7 @@ export default function VaultPage() {
 
   async function deleteActiveEvent() {
     if (!activeEvent) return
-    if (!window.confirm('确定删除这个事件？相关 claims 和 evidence 也会删除。')) return
+    if (!window.confirm('确定删除这个条目？相关证据也会删除。')) return
     await deleteEvent(activeEvent.id)
     setActiveEvent(null)
     setEventForm(null)
@@ -367,7 +486,7 @@ export default function VaultPage() {
 
   async function createNewEvent() {
     if (!newEventForm.title.trim()) {
-      setStatusMessage('请至少填写事件标题')
+      setStatusMessage('请至少填写标题')
       return
     }
     try {
@@ -380,57 +499,16 @@ export default function VaultPage() {
         time_start: newEventForm.time_start || undefined,
         time_end: newEventForm.time_end || undefined,
         description: newEventForm.description || undefined,
-        details_json: newEventForm.details,
+        details_json: detailsFromForm(newEventForm),
         tags: splitTags(newEventForm.tags_text),
       })
-      setStatusMessage('事件已创建')
+      setStatusMessage('条目已创建')
       setShowNewEventModal(false)
-      setNewEventForm({
-        title: '',
-        event_type: 'work',
-        role: '',
-        organization: '',
-        location: '',
-        time_start: '',
-        time_end: '',
-        time_precision: 'month',
-        description: '',
-        visibility: 'private',
-        status: 'draft',
-        tags_text: '',
-        details: { ...EMPTY_DETAILS },
-      })
+      setNewEventForm(emptyEventForm())
       await loadSections()
     } catch {
       setStatusMessage('创建失败，请检查登录状态或 API 设置')
     }
-  }
-
-  async function addClaim() {
-    if (!activeEvent || !newClaimText.trim()) return
-    await createClaim({
-      event_id: activeEvent.id,
-      claim_text: newClaimText.trim(),
-      claim_type: 'achievement',
-      strength: 'confirmed',
-    })
-    setNewClaimText('')
-    await openEvent(activeEvent)
-    await loadSections()
-  }
-
-  async function removeClaim(claimId: string) {
-    if (!activeEvent) return
-    await deleteClaim(claimId)
-    await openEvent(activeEvent)
-    await loadSections()
-  }
-
-  async function renameClaim(claim: VaultClaim, claimText: string) {
-    if (!activeEvent || !claimText.trim() || claimText === claim.claim_text) return
-    await updateClaim(claim.id, { claim_text: claimText.trim() })
-    await openEvent(activeEvent)
-    await loadSections()
   }
 
   return (
@@ -540,7 +618,7 @@ export default function VaultPage() {
                     <span>
                       {source.parse_error
                         ? `解析失败：${source.parse_error}`
-                        : source.raw_text_preview || '已进入队列，等待 AI 生成结构化事件。'}
+                        : source.raw_text_preview || '已进入队列，等待 AI 生成结构化档案。'}
                     </span>
                   </div>
                   <em>{sourceStatusLabel(source.parse_status)}</em>
@@ -555,43 +633,43 @@ export default function VaultPage() {
         <div className="vault-profile-header">
           <div>
             <p className="eyebrow">职业档案</p>
-            <h1>按经历类型沉淀身份资产</h1>
+            <h1>像简历一样管理经历资产</h1>
           </div>
           <div className="vault-profile-actions">
-            <button onClick={loadSections}>刷新</button>
+            <button onClick={() => { loadProfile(); loadSections() }}>刷新</button>
             <button className="danger" onClick={clearCurrentVault} disabled={clearingVault}>
               {clearingVault ? '清空中...' : '清空 Profile'}
             </button>
           </div>
         </div>
 
+        <ProfileHeader profile={profile} />
+
+        {profile?.summary && (
+          <div className="resume-section resume-summary">
+            <div className="resume-section-title">
+              <span>▣</span>
+              <h2>专业摘要</h2>
+            </div>
+            <p>{profile.summary}</p>
+          </div>
+        )}
+
         {loading ? (
           <div className="empty-state">正在加载职业档案...</div>
-        ) : sections.length === 0 ? (
-          <div className="empty-state">左侧输入材料后，AI 会在这里按分类生成经历卡片。</div>
+        ) : resumeSections.length === 0 && !profile?.summary ? (
+          <div className="empty-state">左侧输入材料后，AI 会在这里生成像简历一样的职业档案。</div>
         ) : (
-          <div className="section-stack">
-            {sections.map((section) => (
-              <div key={`${section.section_type}:${section.section_title}`} className="profile-section">
-                <div className="section-heading">
+          <div className="resume-section-stack">
+            {resumeSections.map((section) => (
+              <div key={section.section_type} className="resume-section">
+                <div className="resume-section-title">
+                  <span>▣</span>
                   <h2>{section.section_title}</h2>
-                  <span>{section.events.length} 个事件</span>
                 </div>
-                <div className="event-grid">
+                <div className="resume-items">
                   {section.events.map((event) => (
-                    <button key={event.id} className="event-card" onClick={() => openEvent(event)}>
-                      <div className="event-card-top">
-                        <span>{STATUS_LABELS[event.status] || event.status}</span>
-                        <span>{confidenceLabel(event.source_confidence)}</span>
-                      </div>
-                      <h3>{event.title}</h3>
-                      <p>{[event.organization, event.role].filter(Boolean).join(' · ') || '未填写组织/角色'}</p>
-                      <p>{[event.time_start, event.time_end].filter(Boolean).join(' - ') || '时间待补充'}</p>
-                      <div className="event-meta-row">
-                        <span>{event.claims_count || 0} claims</span>
-                        <span>{event.evidence_count || 0} evidence</span>
-                      </div>
-                    </button>
+                    <ResumeEvent key={event.id} event={event} onEdit={() => openEvent(event)} />
                   ))}
                 </div>
               </div>
@@ -604,104 +682,191 @@ export default function VaultPage() {
             <button className="manual-add-btn" onClick={() => setShowNewEventModal(true)}>
               手动新增经历
             </button>
-            <p>也可以不依赖 AI，直接手动填写工作、项目、教育等类型的事件。</p>
+            <p>也可以不依赖 AI，直接手动填写工作、项目、教育等类型的条目。</p>
           </div>
         )}
       </section>
 
       {activeEvent && eventForm && (
-        <div className="modal-backdrop" onClick={() => setActiveEvent(null)}>
-          <div className="event-modal" onClick={(event) => event.stopPropagation()}>
-            <div className="modal-header">
-              <div>
-                <p className="eyebrow">编辑事件</p>
-                <h2>{activeEvent.title}</h2>
-              </div>
-              <button onClick={() => setActiveEvent(null)}>关闭</button>
-            </div>
-
-            <div className="modal-grid">
-              <label>标题<input value={eventForm.title} onChange={(event) => setEventForm({ ...eventForm, title: event.target.value })} /></label>
-              <label>类型<select value={eventForm.event_type} onChange={(event) => setEventForm({ ...eventForm, event_type: event.target.value })}>{EVENT_TYPE_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-              <label>角色<input value={eventForm.role} onChange={(event) => setEventForm({ ...eventForm, role: event.target.value })} /></label>
-              <label>组织<input value={eventForm.organization} onChange={(event) => setEventForm({ ...eventForm, organization: event.target.value })} /></label>
-              <label>地点<input value={eventForm.location} onChange={(event) => setEventForm({ ...eventForm, location: event.target.value })} /></label>
-              <label>开始时间<input value={eventForm.time_start} onChange={(event) => setEventForm({ ...eventForm, time_start: event.target.value })} /></label>
-              <label>结束时间<input value={eventForm.time_end} onChange={(event) => setEventForm({ ...eventForm, time_end: event.target.value })} /></label>
-              <label>标签<input value={eventForm.tags_text} onChange={(event) => setEventForm({ ...eventForm, tags_text: event.target.value })} /></label>
-            </div>
-
-            <label className="modal-field">描述<textarea value={eventForm.description} onChange={(event) => setEventForm({ ...eventForm, description: event.target.value })} /></label>
-            <div className="detail-grid">
-              <label>背景<textarea value={eventForm.details.context} onChange={(event) => setEventForm({ ...eventForm, details: { ...eventForm.details, context: event.target.value } })} /></label>
-              <label>个人贡献<textarea value={eventForm.details.contribution} onChange={(event) => setEventForm({ ...eventForm, details: { ...eventForm.details, contribution: event.target.value } })} /></label>
-              <label>实现方法<textarea value={eventForm.details.implementation} onChange={(event) => setEventForm({ ...eventForm, details: { ...eventForm.details, implementation: event.target.value } })} /></label>
-              <label>结果<textarea value={eventForm.details.outcome} onChange={(event) => setEventForm({ ...eventForm, details: { ...eventForm.details, outcome: event.target.value } })} /></label>
-            </div>
-
-            <div className="claims-panel">
-              <div className="claims-heading">
-                <h3>可复用事实</h3>
-                <span>{claims.length} 条</span>
-              </div>
-              {claims.map((claim) => (
-                <div key={claim.id} className="claim-row">
-                  <input defaultValue={claim.claim_text} onBlur={(event) => renameClaim(claim, event.target.value)} />
-                  <button onClick={() => removeClaim(claim.id)}>删除</button>
-                </div>
-              ))}
-              <div className="claim-row">
-                <input value={newClaimText} onChange={(event) => setNewClaimText(event.target.value)} placeholder="新增可复用事实" />
-                <button onClick={addClaim}>添加</button>
-              </div>
-            </div>
-
-            <div className="modal-actions">
-              <button onClick={deleteActiveEvent} className="danger">删除事件</button>
-              <button onClick={saveEvent}>保存修改</button>
-              <button onClick={confirmActiveEvent} className="primary">确认入库</button>
-            </div>
-          </div>
-        </div>
+        <EventModal
+          title="编辑档案条目"
+          form={eventForm}
+          onChange={setEventForm}
+          onClose={() => setActiveEvent(null)}
+          onDelete={deleteActiveEvent}
+          onSave={saveEvent}
+          onConfirm={confirmActiveEvent}
+        />
       )}
 
       {showNewEventModal && (
-        <div className="modal-backdrop" onClick={() => setShowNewEventModal(false)}>
-          <div className="event-modal" onClick={(event) => event.stopPropagation()}>
-            <div className="modal-header">
-              <div>
-                <p className="eyebrow">手动新增经历</p>
-                <h2>新建事件</h2>
-              </div>
-              <button onClick={() => setShowNewEventModal(false)}>关闭</button>
-            </div>
+        <EventModal
+          title="手动新增条目"
+          form={newEventForm}
+          onChange={setNewEventForm}
+          onClose={() => setShowNewEventModal(false)}
+          onSave={createNewEvent}
+          saveLabel="创建条目"
+        />
+      )}
+    </div>
+  )
+}
 
-            <div className="modal-grid">
-              <label>标题<input value={newEventForm.title} onChange={(event) => setNewEventForm({ ...newEventForm, title: event.target.value })} placeholder="例如：增长产品实习" /></label>
-              <label>类型<select value={newEventForm.event_type} onChange={(event) => setNewEventForm({ ...newEventForm, event_type: event.target.value })}>{EVENT_TYPE_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-              <label>角色<input value={newEventForm.role} onChange={(event) => setNewEventForm({ ...newEventForm, role: event.target.value })} placeholder="例如：产品实习生" /></label>
-              <label>组织<input value={newEventForm.organization} onChange={(event) => setNewEventForm({ ...newEventForm, organization: event.target.value })} placeholder="例如：字节跳动" /></label>
-              <label>地点<input value={newEventForm.location} onChange={(event) => setNewEventForm({ ...newEventForm, location: event.target.value })} placeholder="例如：北京" /></label>
-              <label>开始时间<input value={newEventForm.time_start} onChange={(event) => setNewEventForm({ ...newEventForm, time_start: event.target.value })} placeholder="2024-06" /></label>
-              <label>结束时间<input value={newEventForm.time_end} onChange={(event) => setNewEventForm({ ...newEventForm, time_end: event.target.value })} placeholder="2025-03" /></label>
-              <label>标签<input value={newEventForm.tags_text} onChange={(event) => setNewEventForm({ ...newEventForm, tags_text: event.target.value })} placeholder="增长, A/B 测试" /></label>
-            </div>
+function ProfileHeader({ profile }: { profile: ProfileData | null }) {
+  const primaryEmail = profile?.emails?.[0]
+  const primaryPhone = profile?.phones?.[0]
+  const primaryLink = profile?.links?.find((link) => link.url)
 
-            <label className="modal-field">描述<textarea value={newEventForm.description} onChange={(event) => setNewEventForm({ ...newEventForm, description: event.target.value })} placeholder="简要描述这段经历..." /></label>
-            <div className="detail-grid">
-              <label>背景<textarea value={newEventForm.details.context} onChange={(event) => setNewEventForm({ ...newEventForm, details: { ...newEventForm.details, context: event.target.value } })} placeholder="这段经历的背景是什么？" /></label>
-              <label>个人贡献<textarea value={newEventForm.details.contribution} onChange={(event) => setNewEventForm({ ...newEventForm, details: { ...newEventForm.details, contribution: event.target.value } })} placeholder="你的具体贡献是什么？" /></label>
-              <label>实现方法<textarea value={newEventForm.details.implementation} onChange={(event) => setNewEventForm({ ...newEventForm, details: { ...newEventForm.details, implementation: event.target.value } })} placeholder="采用了什么方法或技术？" /></label>
-              <label>结果<textarea value={newEventForm.details.outcome} onChange={(event) => setNewEventForm({ ...newEventForm, details: { ...newEventForm.details, outcome: event.target.value } })} placeholder="带来了什么可量化的结果？" /></label>
-            </div>
+  return (
+    <div className="resume-hero">
+      <div>
+        <h2>{profile?.full_name || '你的姓名'}</h2>
+        <p>{profile?.headline || '添加材料后，AI 会整理你的职业身份'}</p>
+      </div>
+      <div className="resume-contact-row">
+        {typeof profile?.years_of_experience === 'number' && <span>{profile.years_of_experience} 年经验</span>}
+        {primaryEmail && <span>{primaryEmail}</span>}
+        {primaryPhone && <span>{primaryPhone}</span>}
+        {profile?.location && <span>{profile.location}</span>}
+        {primaryLink?.url && <a href={primaryLink.url} target="_blank" rel="noreferrer">{primaryLink.label || '个人链接'}</a>}
+      </div>
+    </div>
+  )
+}
 
-            <div className="modal-actions">
-              <button onClick={() => setShowNewEventModal(false)}>取消</button>
-              <button onClick={createNewEvent} className="primary">创建事件</button>
-            </div>
-          </div>
+function ResumeEvent({ event, onEdit }: { event: VaultEvent; onEdit: () => void }) {
+  const sectionType = getLiteSectionType(event)
+  const bullets = getBullets(event)
+  const skills = getSkills(event)
+  const techStack = getTechStack(event)
+  const details = event.details_json || {}
+  const dateRange = joinDateRange(event.time_start, event.time_end)
+  const chips = sectionType === 'projects' ? techStack : skills
+
+  return (
+    <article className={`resume-item resume-item-${sectionType}`}>
+      <button className="resume-edit-btn" onClick={onEdit} aria-label={`编辑${event.title}`}>✎</button>
+      <div className="resume-item-head">
+        <div>
+          <h3>{event.title}</h3>
+          <p>{[event.organization, event.role].filter(Boolean).join(' · ')}</p>
+        </div>
+        {dateRange && <time>{dateRange}</time>}
+      </div>
+      {event.location && <p className="resume-muted">{event.location}</p>}
+      {sectionType === 'education' && (
+        <div className="resume-inline">
+          {details.field && <span>{details.field}</span>}
+          {details.gpa && <span>GPA: {details.gpa}</span>}
+          {getStringList(details.honors).map((honor) => <span key={honor}>{honor}</span>)}
         </div>
       )}
+      {sectionType === 'research' && (
+        <div className="resume-inline">
+          {getStringList(details.authors).map((author) => <span key={author}>{author}</span>)}
+          {details.url && <a href={String(details.url)} target="_blank" rel="noreferrer">链接</a>}
+        </div>
+      )}
+      {sectionType === 'certifications' && details.url && <a className="resume-link" href={String(details.url)} target="_blank" rel="noreferrer">查看链接</a>}
+      {sectionType === 'languages' && details.proficiency && <p className="resume-muted">{String(details.proficiency)}</p>}
+      {event.description && <p className="resume-description">{event.description}</p>}
+      {bullets.length > 0 && (
+        <ul className="resume-bullets">
+          {bullets.map((bullet) => <li key={bullet}>{bullet}</li>)}
+        </ul>
+      )}
+      {chips.length > 0 && (
+        <div className="resume-chip-row">
+          {chips.map((chip) => <span key={chip}>{chip}</span>)}
+        </div>
+      )}
+      <div className="resume-status-row">
+        <span>{STATUS_LABELS[event.status] || event.status}</span>
+      </div>
+    </article>
+  )
+}
+
+function EventModal({
+  title,
+  form,
+  onChange,
+  onClose,
+  onDelete,
+  onSave,
+  onConfirm,
+  saveLabel = '保存修改',
+}: {
+  title: string
+  form: EventForm
+  onChange: (form: EventForm) => void
+  onClose: () => void
+  onDelete?: () => void
+  onSave: () => void
+  onConfirm?: () => void
+  saveLabel?: string
+}) {
+  const sectionType = getLiteSectionType({
+    id: '',
+    event_type: form.event_type,
+    title: form.title,
+    status: form.status,
+    visibility: form.visibility,
+    details_json: {},
+  })
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="event-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">{getLiteSectionTitle(sectionType)}</p>
+            <h2>{title}</h2>
+          </div>
+          <button onClick={onClose}>关闭</button>
+        </div>
+
+        <div className="modal-grid">
+          <label>类型<select value={form.event_type} onChange={(event) => onChange({ ...form, event_type: event.target.value })}>{EVENT_TYPE_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+          <label>标题<input value={form.title} onChange={(event) => onChange({ ...form, title: event.target.value })} /></label>
+          {sectionType !== 'education' && sectionType !== 'languages' && <label>角色<input value={form.role} onChange={(event) => onChange({ ...form, role: event.target.value })} /></label>}
+          <label>{sectionType === 'education' ? '学校' : sectionType === 'projects' ? '组织/上下文' : '机构/公司'}<input value={form.organization} onChange={(event) => onChange({ ...form, organization: event.target.value })} /></label>
+          <label>开始时间<input value={form.time_start} onChange={(event) => onChange({ ...form, time_start: event.target.value })} /></label>
+          <label>结束时间<input value={form.time_end} onChange={(event) => onChange({ ...form, time_end: event.target.value })} /></label>
+          {sectionType === 'experience' && <label>地点<input value={form.location} onChange={(event) => onChange({ ...form, location: event.target.value })} /></label>}
+          {sectionType === 'education' && <label>专业<input value={form.field} onChange={(event) => onChange({ ...form, field: event.target.value })} /></label>}
+          {sectionType === 'education' && <label>GPA<input value={form.gpa} onChange={(event) => onChange({ ...form, gpa: event.target.value })} /></label>}
+          {sectionType === 'languages' && <label>熟练度<input value={form.proficiency} onChange={(event) => onChange({ ...form, proficiency: event.target.value })} /></label>}
+          {(sectionType === 'projects' || sectionType === 'certifications' || sectionType === 'research') && <label>链接<input value={form.url} onChange={(event) => onChange({ ...form, url: event.target.value })} /></label>}
+          {sectionType === 'projects' && <label>技术栈<input value={form.tech_stack_text} onChange={(event) => onChange({ ...form, tech_stack_text: event.target.value })} placeholder="Python，FastAPI，LangGraph" /></label>}
+          {sectionType === 'experience' && <label>技能<input value={form.skills_text} onChange={(event) => onChange({ ...form, skills_text: event.target.value })} placeholder="LLM Agent，Tool Calling" /></label>}
+          {sectionType === 'education' && <label>荣誉<input value={form.honors_text} onChange={(event) => onChange({ ...form, honors_text: event.target.value })} /></label>}
+          {sectionType === 'research' && <label>作者/发明人<input value={form.authors_text} onChange={(event) => onChange({ ...form, authors_text: event.target.value })} /></label>}
+        </div>
+
+        {(sectionType === 'experience' || sectionType === 'projects') && (
+          <label className="modal-field">
+            要点列表
+            <textarea
+              value={form.bullets_text}
+              onChange={(event) => onChange({ ...form, bullets_text: event.target.value })}
+              placeholder="每行一条简历 bullet"
+            />
+          </label>
+        )}
+
+        <label className="modal-field">
+          描述
+          <textarea value={form.description} onChange={(event) => onChange({ ...form, description: event.target.value })} />
+        </label>
+
+        <div className="modal-actions">
+          {onDelete && <button onClick={onDelete} className="danger">删除条目</button>}
+          <button onClick={onSave} className="primary">{saveLabel}</button>
+          {onConfirm && <button onClick={onConfirm}>确认入库</button>}
+        </div>
+      </div>
     </div>
   )
 }
