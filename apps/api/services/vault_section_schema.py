@@ -194,6 +194,20 @@ SECTION_SCHEMAS: dict[str, SectionSchema] = {
     ),
 }
 
+SOURCE_PARSE_SECTION_TYPES = [
+    "summary",
+    "experience",
+    "projects",
+    "education",
+    "skills",
+    "awards",
+    "courses",
+    "certifications",
+    "research",
+    "other",
+    "languages",
+]
+
 
 def get_section_schema(section_type: str) -> SectionSchema:
     return SECTION_SCHEMAS.get(section_type, SECTION_SCHEMAS["other"])
@@ -228,6 +242,16 @@ def render_section_output_schema(section_type: str) -> dict[str, Any]:
     if details:
         event["details"] = details
     return {"section_type": schema.section_type, "events": [event], "warnings": "string[]"}
+
+
+def render_all_section_field_instructions(section_types: list[str] | None = None) -> str:
+    selected = section_types or SOURCE_PARSE_SECTION_TYPES
+    return "\n\n".join(render_section_field_instructions(section_type) for section_type in selected)
+
+
+def render_all_section_output_schemas(section_types: list[str] | None = None) -> dict[str, Any]:
+    selected = section_types or SOURCE_PARSE_SECTION_TYPES
+    return {section_type: render_section_output_schema(section_type) for section_type in selected}
 
 
 def get_section_dedupe_fields(section_type: str) -> list[str]:
