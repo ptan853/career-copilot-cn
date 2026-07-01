@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { getProfile, updateProfile, getCurrentUser, logout } from '@/lib/api-client'
 import type { AuthUser } from '@/lib/api-client'
@@ -50,13 +50,30 @@ const createProfileLink = () => ({
   last_parse_error: null,
 })
 
+type SaveTarget = 'profile' | 'links' | 'ai'
+
 export default function SettingsPage() {
   const router = useRouter()
   const [user, setUser] = useState<AuthUser | null>(null)
   const [profile, setProfile] = useState<Record<string, any>>({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [savedTarget, setSavedTarget] = useState<SaveTarget | null>(null)
+  const [apiSecretEditable, setApiSecretEditable] = useState(false)
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const messageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const savedTargetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const showMessage = (nextMessage: { type: 'success' | 'error'; text: string }) => {
+    if (messageTimerRef.current) {
+      clearTimeout(messageTimerRef.current)
+    }
+    setMessage(nextMessage)
+    messageTimerRef.current = setTimeout(() => {
+      setMessage(null)
+      messageTimerRef.current = null
+    }, 3600)
+  }
 
   useEffect(() => {
     Promise.all([
@@ -86,8 +103,27 @@ export default function SettingsPage() {
     }).catch(() => {}).finally(() => setLoading(false))
   }, [])
 
-  const handleSave = async () => {
+  useEffect(() => {
+    if (!loading) {
+      setProfile(current => ({ ...current, ai_api_key: '' }))
+      setApiSecretEditable(false)
+    }
+  }, [loading])
+
+  useEffect(() => {
+    return () => {
+      if (messageTimerRef.current) {
+        clearTimeout(messageTimerRef.current)
+      }
+      if (savedTargetTimerRef.current) {
+        clearTimeout(savedTargetTimerRef.current)
+      }
+    }
+  }, [])
+
+  const handleSave = async (target: SaveTarget, successText = '已保存设置') => {
     setSaving(true)
+    setSavedTarget(null)
     setMessage(null)
     try {
       const response = await updateProfile({
@@ -133,10 +169,17 @@ export default function SettingsPage() {
       } else {
         setProfile({ ...profile, ai_api_key: '', has_ai_api_key: profile.has_ai_api_key || Boolean(profile.ai_api_key) })
       }
-      setMessage({ type: 'success', text: '已保存设置' })
-      setTimeout(() => setMessage(null), 3500)
+      if (savedTargetTimerRef.current) {
+        clearTimeout(savedTargetTimerRef.current)
+      }
+      setSavedTarget(target)
+      savedTargetTimerRef.current = setTimeout(() => {
+        setSavedTarget(null)
+        savedTargetTimerRef.current = null
+      }, 2600)
+      showMessage({ type: 'success', text: successText })
     } catch (error) {
-      setMessage({ type: 'error', text: error instanceof Error ? error.message : '保存失败，请稍后重试' })
+      showMessage({ type: 'error', text: error instanceof Error ? error.message : '保存失败，请稍后重试' })
     } finally {
       setSaving(false)
     }
@@ -179,17 +222,17 @@ export default function SettingsPage() {
       </div>
 
       {message && (
-        <div className={`fixed right-6 top-6 z-50 flex items-center gap-3 rounded-[18px] border px-4 py-3 text-sm font-bold shadow-[0_18px_60px_rgba(15,23,42,0.18)] transition-all ${
+        <div role="status" aria-live="polite" className={`fixed right-6 top-24 z-[100] flex min-w-[220px] items-center gap-3 rounded-[20px] border px-4 py-3 text-sm font-black shadow-[0_24px_70px_rgba(15,23,42,0.22)] backdrop-blur animate-[save-toast-in_180ms_ease-out] max-sm:left-4 max-sm:right-4 max-sm:top-auto max-sm:bottom-5 ${
           message.type === 'success'
             ? 'border-emerald-200 bg-white text-emerald-700'
             : 'border-red-200 bg-white text-red-700'
         }`}>
-          <span className={`grid h-7 w-7 place-items-center rounded-full text-white ${
+          <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-full text-base text-white shadow-[0_10px_24px_rgba(16,185,129,0.25)] ${
             message.type === 'success' ? 'bg-emerald-500' : 'bg-red-500'
           }`}>
             {message.type === 'success' ? '✓' : '!'}
           </span>
-          {message.text}
+          <span>{message.text}</span>
         </div>
       )}
 
@@ -261,9 +304,15 @@ export default function SettingsPage() {
               placeholder="个人简介，将在简历中使用"
             />
             <div className="flex items-center gap-3">
-              <button className="btn primary" onClick={handleSave} disabled={saving}>
+              <button className="btn primary" onClick={() => handleSave('profile', '档案已保存')} disabled={saving}>
                 {saving ? '保存中...' : '保存档案'}
               </button>
+              {savedTarget === 'profile' && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-2 text-sm font-black text-emerald-700 animate-[save-toast-in_180ms_ease-out]">
+                  <span className="grid h-5 w-5 place-items-center rounded-full bg-emerald-500 text-xs text-white">✓</span>
+                  已保存
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -332,9 +381,15 @@ export default function SettingsPage() {
               </div>
             )}
             <div className="flex items-center gap-3">
-              <button className="btn primary" onClick={handleSave} disabled={saving}>
+              <button className="btn primary" onClick={() => handleSave('links', '链接已保存')} disabled={saving}>
                 {saving ? '保存中...' : '保存链接'}
               </button>
+              {savedTarget === 'links' && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-2 text-sm font-black text-emerald-700 animate-[save-toast-in_180ms_ease-out]">
+                  <span className="grid h-5 w-5 place-items-center rounded-full bg-emerald-500 text-xs text-white">✓</span>
+                  已保存
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -407,20 +462,43 @@ export default function SettingsPage() {
                   {profile.has_ai_api_key ? '已保存 Key，留空则不修改' : '留空则使用平台默认 Key'}
                 </span>
               </div>
+              <div className="hidden" aria-hidden="true">
+                <input tabIndex={-1} autoComplete="username" name="username" />
+                <input tabIndex={-1} autoComplete="current-password" name="password" type="password" />
+              </div>
               <input
-                className="input"
+                className="input api-key-input"
                 value={profile.ai_api_key || ''}
                 onChange={e => setProfile({ ...profile, ai_api_key: e.target.value })}
+                onFocus={() => setApiSecretEditable(true)}
                 placeholder={profile.has_ai_api_key ? '已配置，输入新 Key 可覆盖' : 'sk-xxxxxxxxxxxxxxxxxxxxxxxx'}
-                type="password"
+                type="text"
+                autoComplete="new-password"
+                autoCorrect="off"
+                autoCapitalize="none"
+                spellCheck={false}
+                name="cc_provider_secret_manual"
+                id="cc-provider-secret-manual"
+                readOnly={!apiSecretEditable}
+                data-1p-ignore="true"
+                data-lpignore="true"
+                data-form-type="other"
               />
             </label>
             <div className="rounded-[14px] bg-[#fff8e7] p-3 text-xs text-[#86581f]">
               服务器不会回传已保存的完整 Key。第一版先支持 OpenAI-compatible 调用，不启用 hosted web search / file search。
             </div>
-            <button className="btn primary" onClick={handleSave} disabled={saving}>
-              {saving ? '保存中...' : '保存 AI 配置'}
-            </button>
+            <div className="flex items-center gap-3">
+              <button className="btn primary" onClick={() => handleSave('ai', 'AI 配置已保存')} disabled={saving}>
+                {saving ? '保存中...' : '保存 AI 配置'}
+              </button>
+              {savedTarget === 'ai' && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-2 text-sm font-black text-emerald-700 animate-[save-toast-in_180ms_ease-out]">
+                  <span className="grid h-5 w-5 place-items-center rounded-full bg-emerald-500 text-xs text-white">✓</span>
+                  已保存
+                </span>
+              )}
+            </div>
           </div>
         </div>
 

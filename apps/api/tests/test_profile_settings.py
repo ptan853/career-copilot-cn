@@ -40,7 +40,7 @@ def test_update_profile_persists_provider_settings_without_returning_api_key(tmp
                     "ai_provider_name": "bailian-qwen-plus",
                     "ai_api_base": "https://dashscope.aliyuncs.com/compatible-mode/v1",
                     "ai_model_name": "qwen-plus",
-                    "ai_api_key": "sk-secret",
+                    "ai_api_key": "sk-test-valid-provider-key-123456",
                 },
             )
             assert response.status_code == 200
@@ -77,7 +77,7 @@ def test_update_profile_creates_profile_when_missing(tmp_path):
                     "ai_provider": "bailian_qwen",
                     "ai_api_base": "https://example.com/compatible-mode/v1",
                     "ai_model_name": "qwen-plus",
-                    "ai_api_key": "sk-secret",
+                    "ai_api_key": "sk-test-valid-provider-key-123456",
                 },
             )
             profile_response = client.get("/api/vault/profile")
@@ -91,6 +91,64 @@ def test_update_profile_creates_profile_when_missing(tmp_path):
         assert data["ai_api_base"] == "https://example.com/compatible-mode/v1"
         assert data["ai_model_name"] == "qwen-plus"
         assert data["has_ai_api_key"] is True
+
+
+def test_update_profile_rejects_short_or_masked_api_key(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'profile_short_key.db'}", echo=False)
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        user = User(display_name="Short Key User", email="short-key@example.com")
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        session.add(Profile(user_id=user.id, full_name="Short Key User", ai_api_key="sk-existing-valid-key-123456"))
+        session.commit()
+
+        client = _client_for_user(user, session)
+        try:
+            response = client.patch(
+                "/api/vault/profile",
+                json={
+                    "ai_provider": "bailian_qwen",
+                    "ai_api_key": "••••••••••••",
+                },
+            )
+            profile_response = client.get("/api/vault/profile")
+        finally:
+            app.dependency_overrides.clear()
+
+        assert response.status_code == 400
+        assert "完整 API Key" in response.json()["detail"]
+        assert profile_response.json()["data"]["has_ai_api_key"] is True
+
+
+def test_update_profile_rejects_password_like_provider_key(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'profile_password_key.db'}", echo=False)
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        user = User(display_name="Password Key User", email="password-key@example.com")
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        session.add(Profile(user_id=user.id, full_name="Password Key User"))
+        session.commit()
+
+        client = _client_for_user(user, session)
+        try:
+            response = client.patch(
+                "/api/vault/profile",
+                json={
+                    "ai_provider": "bailian_qwen",
+                    "ai_api_key": "this-is-probably-a-login-password",
+                },
+            )
+        finally:
+            app.dependency_overrides.clear()
+
+        assert response.status_code == 400
+        assert "sk-" in response.json()["detail"]
 
 
 def test_update_profile_normalizes_structured_links(tmp_path):

@@ -181,12 +181,27 @@ def update_profile(
     update_data = body.model_dump(exclude_none=True)
     if "links" in update_data:
         update_data["links"] = normalize_profile_links(update_data["links"])
+    if "ai_api_key" in update_data:
+        provider = update_data.get("ai_provider") or getattr(profile, "ai_provider", None)
+        update_data["ai_api_key"] = _normalize_ai_api_key(update_data["ai_api_key"], provider)
     for key, val in update_data.items():
         setattr(profile, key, val)
     session.add(profile)
     session.commit()
     session.refresh(profile)
     return {"message": "已更新", "data": serialize_profile(profile)}
+
+
+def _normalize_ai_api_key(raw_key: str, provider: str | None = None) -> str:
+    key = raw_key.strip()
+    if not key:
+        return key
+    masked_chars = {"•", "*", "●", "·", "•"}
+    if len(key) < 20 or all(char in masked_chars for char in key):
+        raise HTTPException(status_code=400, detail="请粘贴完整 API Key，不要输入浏览器自动填充的遮罩字符。")
+    if provider != "custom_openai_compatible" and not key.startswith("sk-"):
+        raise HTTPException(status_code=400, detail="当前服务商的 API Key 应以 sk- 开头，请不要保存登录密码或浏览器自动填充内容。")
+    return key
 
 
 # ============================================================

@@ -191,9 +191,78 @@ def test_execute_job_marks_source_failed_when_provider_fails(monkeypatch, tmp_pa
         session.refresh(job)
 
         assert source.parse_status == "failed"
-        assert source.parse_error == "quota exceeded"
+        assert source.parse_error == "模型服务额度不足或限额已用完，请检查账户额度。"
         assert job.status == "failed"
-        assert job.error_message == "quota exceeded"
+        assert job.error_message == source.parse_error
+
+
+def test_execute_job_sanitizes_provider_json_error(monkeypatch, tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'worker-json-error.db'}", echo=False)
+    SQLModel.metadata.create_all(engine)
+    monkeypatch.setattr(ai_worker, "engine", engine)
+
+    with Session(engine) as session:
+        user = User(email="worker-json-error@example.com", display_name="Worker JSON Error")
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+
+        source = SourceMaterial(
+            user_id=user.id,
+            source_type="text",
+            title="简历片段",
+            raw_text="负责增长实验设计",
+            parse_status="uploaded",
+        )
+        session.add(source)
+        session.commit()
+        session.refresh(source)
+
+        job = BackgroundJob(
+            user_id=user.id,
+            job_type="source_parse",
+            payload={"source_id": str(source.id), "text": source.raw_text},
+            status="queued",
+        )
+        session.add(job)
+        session.commit()
+        session.refresh(job)
+
+        monkeypatch.setattr(ai_worker, "DRY_RUN", False)
+        monkeypatch.setattr(
+            ai_worker,
+            "resolve_provider_config",
+            lambda user_id, session: ProviderConfig(
+                kind=ProviderKind.BAILIAN_QWEN,
+                name="bailian-qwen-plus",
+                base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+                api_key="sk-test",
+                model_name="qwen-plus",
+            ),
+        )
+
+        class InvalidKeyProvider:
+            def __init__(self, config):
+                self.config = config
+
+            def generate(self, request):
+                raise ProviderError(
+                    self.config.name,
+                    '{"error":{"message":"Invalid API-key provided. For details, see: https://www.alibabacloud.com/help/en/model-studio/error-code#apikey-error","id":"6e114f5d-e1c7-9b45-afa0-ad4c6c0b020b","type":"invalid_request_error","code":"invalid_api_key"}}',
+                    401,
+                )
+
+        monkeypatch.setattr(ai_worker, "OpenAICompatibleProvider", InvalidKeyProvider)
+
+        ai_worker._execute_job(session, job)
+
+        session.refresh(source)
+        session.refresh(job)
+
+        assert source.parse_status == "failed"
+        assert source.parse_error == "API Key 无效，请检查设置里的模型服务密钥。"
+        assert job.status == "failed"
+        assert job.error_message == source.parse_error
 
 
 def test_dry_run_defaults_to_disabled(monkeypatch):

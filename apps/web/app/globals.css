@@ -290,6 +290,19 @@ body {
   font-weight: 750;
 }
 
+.material-error {
+  margin-top: 7px;
+  max-width: 100%;
+  border-radius: 12px;
+  background: #ffe8e8;
+  color: #a83333;
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1.45;
+  padding: 7px 9px;
+  white-space: normal;
+}
+
 .material-row em {
   border-radius: 999px;
   background: #f4f1ec;
@@ -398,6 +411,22 @@ body {
   font-weight: 800;
 }
 
+.api-key-input {
+  -webkit-text-security: disc;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+
+@keyframes save-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 .source-list {
   margin-top: 18px;
   border-top: 1px solid var(--app-line-soft);
@@ -455,6 +484,11 @@ body {
   padding: 11px 12px;
 }
 
+.source-list-item.failed {
+  border-color: #f1b8b8;
+  background: #fff7f7;
+}
+
 .source-list-item div {
   min-width: 0;
 }
@@ -494,6 +528,11 @@ body {
   font-style: normal;
   font-weight: 900;
   padding: 5px 8px;
+}
+
+.source-list-item.failed em {
+  background: #ffe1e1;
+  color: #a83333;
 }
 
 .vault-profile {

@@ -491,10 +491,8 @@ export default function VaultPage() {
                   <span className="material-index">{pendingFiles.length + index + 1}</span>
                   <div className="material-main">
                     <strong>{source.title}</strong>
-                    <span>
-                      {source.source_type === 'file' ? '文件' : '文本'} · {sourceStatusLabel(source.parse_status)}
-                      {source.parse_error ? ` · ${source.parse_error}` : ''}
-                    </span>
+                    <span>{source.source_type === 'file' ? '文件' : '文本'} · {sourceStatusLabel(source.parse_status)}</span>
+                    {source.parse_error && <p className="material-error">{source.parse_error}</p>}
                   </div>
                   <em>{sourceStatusLabel(source.parse_status)}</em>
                   <button type="button" onClick={() => removeSource(source)} aria-label="删除材料">
@@ -536,7 +534,7 @@ export default function VaultPage() {
           ) : (
             <div className="source-list-stack">
               {sources.slice(0, 6).map((source) => (
-                <div key={source.id} className="source-list-item">
+                <div key={source.id} className={`source-list-item ${source.parse_status === 'failed' ? 'failed' : ''}`}>
                   <div>
                     <strong>{source.title}</strong>
                     <span>

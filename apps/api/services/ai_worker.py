@@ -185,7 +185,7 @@ def _execute_job(session: Session, job: BackgroundJob) -> None:
         )
         parsed = result.json_data or json.loads(result.text)
     except Exception as exc:
-        message = str(exc)[:1000]
+        message = _user_facing_error(exc)
         source.parse_status = "failed"
         source.parse_error = message
         job.status = "failed"
@@ -297,6 +297,32 @@ def _execute_job(session: Session, job: BackgroundJob) -> None:
         "job %s complete: %d events, %d claims",
         job.id, created_events, created_claims,
     )
+
+
+def _user_facing_error(exc: Exception) -> str:
+    raw = str(exc).strip()
+    parsed_message = raw
+    parsed_code = ""
+
+    if raw.startswith("{"):
+        try:
+            payload = json.loads(raw)
+            error = payload.get("error") if isinstance(payload, dict) else None
+            if isinstance(error, dict):
+                parsed_message = str(error.get("message") or raw)
+                parsed_code = str(error.get("code") or "")
+        except json.JSONDecodeError:
+            parsed_message = raw
+
+    normalized = f"{parsed_code} {parsed_message}".lower()
+    if "invalid_api_key" in normalized or "invalid api-key" in normalized or "invalid api key" in normalized:
+        return "API Key 无效，请检查设置里的模型服务密钥。"
+    if "quota" in normalized or "insufficient" in normalized:
+        return "模型服务额度不足或限额已用完，请检查账户额度。"
+    if "unauthorized" in normalized or "permission" in normalized or "forbidden" in normalized:
+        return "模型服务鉴权失败，请检查 API Key、Base URL 和模型权限。"
+
+    return parsed_message[:1000] or "模型服务调用失败，请检查 AI 配置后重试。"
 
 
 def _safe_enum(value: str, valid: list[str], fallback: str) -> str:
