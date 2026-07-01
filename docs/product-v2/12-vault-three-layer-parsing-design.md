@@ -947,8 +947,10 @@ For first implementation:
 
 - Draft events may be auto-updated.
 - Confirmed events are not overwritten silently.
-- If a new event matches a confirmed event, attach source/evidence and only add clearly missing non-conflicting fields.
-- Conflicting fields should create an event update patch, not silently overwrite the confirmed event.
+- If a new event matches a draft event, the pipeline may AI-merge low-risk additions directly into the draft event and keep a reversible patch record.
+- If a new event matches a confirmed event, the pipeline must create a pending event update patch and leave the confirmed event unchanged.
+- Accepting a pending update in the frontend does not immediately write to the database. It applies the suggested fields into the edit form, lets the user continue editing, and only persists when the user clicks Save.
+- Rejecting a pending update keeps the confirmed event unchanged and marks the patch rejected.
 
 ## 10. Event Update Diff And Undo
 
@@ -1014,7 +1016,7 @@ The frontend should display field-level changes, not code-style line diffs:
 
 Actions:
 
-- Accept: apply `after` to the event and mark patch `accepted`.
+- Accept: apply suggested changes to the frontend edit form and mark the patch as accepted only when the user saves the form.
 - Reject: keep current event and mark patch `rejected`.
 - Edit manually: open event editor with suggested fields prefilled.
 - Undo accepted update: restore `before` snapshot and mark patch `reverted`.
