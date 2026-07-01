@@ -176,7 +176,7 @@ def update_profile(
         select(Profile).where(Profile.user_id == user_uuid)
     ).first()
     if not profile:
-        raise HTTPException(status_code=404, detail="Profile not found")
+        profile = Profile(user_id=user_uuid)
 
     update_data = body.model_dump(exclude_none=True)
     if "links" in update_data:
@@ -185,7 +185,8 @@ def update_profile(
         setattr(profile, key, val)
     session.add(profile)
     session.commit()
-    return {"message": "已更新"}
+    session.refresh(profile)
+    return {"message": "已更新", "data": serialize_profile(profile)}
 
 
 # ============================================================

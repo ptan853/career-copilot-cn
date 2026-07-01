@@ -56,7 +56,7 @@ export default function SettingsPage() {
   const [profile, setProfile] = useState<Record<string, any>>({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [message, setMessage] = useState('')
+  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
   useEffect(() => {
     Promise.all([
@@ -88,9 +88,9 @@ export default function SettingsPage() {
 
   const handleSave = async () => {
     setSaving(true)
-    setMessage('')
+    setMessage(null)
     try {
-      await updateProfile({
+      const response = await updateProfile({
         full_name: profile.full_name || undefined,
         headline: profile.headline || undefined,
         location: profile.location || undefined,
@@ -111,9 +111,33 @@ export default function SettingsPage() {
         ai_model_name: profile.ai_model_name || undefined,
         ai_api_key: profile.ai_api_key || undefined,
       })
-      setMessage('已保存')
-      setTimeout(() => setMessage(''), 3000)
-    } catch {} finally {
+      const data = (response as any).data
+      if (data) {
+        setProfile({
+          ...profile,
+          full_name: data.full_name || '',
+          headline: data.headline || '',
+          location: data.location || '',
+          summary: data.summary || '',
+          years_of_experience: data.years_of_experience ?? '',
+          target_roles_text: (data.target_roles || []).join('，'),
+          target_locations_text: (data.target_locations || []).join('，'),
+          links: Array.isArray(data.links) ? data.links : [],
+          ai_provider: data.ai_provider || profile.ai_provider || 'bailian_qwen',
+          ai_provider_name: data.ai_provider_name || profile.ai_provider_name || '',
+          ai_api_base: data.ai_api_base || profile.ai_api_base || '',
+          ai_model_name: data.ai_model_name || profile.ai_model_name || '',
+          ai_api_key: '',
+          has_ai_api_key: Boolean(data.has_ai_api_key),
+        })
+      } else {
+        setProfile({ ...profile, ai_api_key: '', has_ai_api_key: profile.has_ai_api_key || Boolean(profile.ai_api_key) })
+      }
+      setMessage({ type: 'success', text: '已保存设置' })
+      setTimeout(() => setMessage(null), 3500)
+    } catch (error) {
+      setMessage({ type: 'error', text: error instanceof Error ? error.message : '保存失败，请稍后重试' })
+    } finally {
       setSaving(false)
     }
   }
@@ -155,6 +179,16 @@ export default function SettingsPage() {
       </div>
 
       <div className="grid gap-5 max-w-[720px]">
+        {message && (
+          <div className={`rounded-[16px] border px-4 py-3 text-sm font-bold ${
+            message.type === 'success'
+              ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+              : 'border-red-200 bg-red-50 text-red-700'
+          }`}>
+            {message.text}
+          </div>
+        )}
+
         {/* Account info */}
         <div className="app-card p-5">
           <h2 className="text-xl font-black mb-4">账号信息</h2>
@@ -225,7 +259,6 @@ export default function SettingsPage() {
               <button className="btn primary" onClick={handleSave} disabled={saving}>
                 {saving ? '保存中...' : '保存档案'}
               </button>
-              {message && <span className="text-sm font-semibold text-app-green">{message}</span>}
             </div>
           </div>
         </div>
@@ -241,7 +274,7 @@ export default function SettingsPage() {
           </div>
           <div className="space-y-3">
             {(profile.links || []).map((link: any, index: number) => (
-              <div key={`${link.url || 'link'}-${index}`} className="rounded-[18px] border border-app-line bg-white p-3">
+              <div key={link.client_id || `link-${index}`} className="rounded-[18px] border border-app-line bg-white p-3">
                 <div className="grid gap-2 md:grid-cols-[150px_1fr_auto]">
                   <select
                     className="input"
@@ -297,7 +330,6 @@ export default function SettingsPage() {
               <button className="btn primary" onClick={handleSave} disabled={saving}>
                 {saving ? '保存中...' : '保存链接'}
               </button>
-              {message && <span className="text-sm font-semibold text-app-green">{message}</span>}
             </div>
           </div>
         </div>

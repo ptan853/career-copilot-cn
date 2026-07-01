@@ -58,6 +58,41 @@ def test_update_profile_persists_provider_settings_without_returning_api_key(tmp
         assert "ai_api_key" not in data
 
 
+def test_update_profile_creates_profile_when_missing(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'profile_create.db'}", echo=False)
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        user = User(display_name="New Profile User", email="new-profile@example.com")
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+
+        client = _client_for_user(user, session)
+        try:
+            response = client.patch(
+                "/api/vault/profile",
+                json={
+                    "full_name": "谭沛烽",
+                    "ai_provider": "bailian_qwen",
+                    "ai_api_base": "https://example.com/compatible-mode/v1",
+                    "ai_model_name": "qwen-plus",
+                    "ai_api_key": "sk-secret",
+                },
+            )
+            profile_response = client.get("/api/vault/profile")
+        finally:
+            app.dependency_overrides.clear()
+
+        assert response.status_code == 200
+        data = profile_response.json()["data"]
+        assert data["full_name"] == "谭沛烽"
+        assert data["ai_provider"] == "bailian_qwen"
+        assert data["ai_api_base"] == "https://example.com/compatible-mode/v1"
+        assert data["ai_model_name"] == "qwen-plus"
+        assert data["has_ai_api_key"] is True
+
+
 def test_update_profile_normalizes_structured_links(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'profile_links.db'}", echo=False)
     SQLModel.metadata.create_all(engine)
